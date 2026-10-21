@@ -38,10 +38,17 @@ stay armed (see `../analysis/NOTES.md`, "MIDI").
 ```sh
 sudo pacman -S --needed base-devel dkms linux-headers   # or linux-zen-headers etc.
 cd linux
-makepkg -si
+makepkg -s
+sudo pacman -U snd-usb-phasex64-dkms-*.pkg.tar.zst phasex64-panel-*.pkg.tar.zst
 ```
 
-This builds the driver via DKMS, including after every kernel update. Then
+`makepkg -s` builds all three packages; install the driver and the panel
+as above. The third, `phasex64-wireplumber`, is optional and changes
+WirePlumber's behaviour for the whole machine - see "PipeWire / JACK"
+below before installing it. (`makepkg -si` would install all three at
+once, including that one.)
+
+DKMS builds the driver, including after every kernel update. Then
 unplug and replug the card, or:
 
 ```sh
@@ -217,12 +224,12 @@ and restores it on every later restart/reconnect - a one-time fix per
 machine, not a recurring step.
 
 Once confirmed, install it system-wide for every user on the machine
-via the optional `phasex64-wireplumber` package (`makepkg -si` from
-this `linux/` directory, same as the driver/panel - see "Installing on
-Arch Linux" above):
+via the optional `phasex64-wireplumber` package, built by `makepkg -s`
+in this `linux/` directory together with the driver and panel (see
+"Installing on Arch Linux" above):
 
 ```sh
-sudo pacman -S phasex64-wireplumber
+sudo pacman -U phasex64-wireplumber-*.pkg.tar.zst
 ```
 
 This is a separate, optional package rather than part of

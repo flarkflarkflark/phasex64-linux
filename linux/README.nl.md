@@ -39,11 +39,18 @@ niet "gewapend" staan (zie `../analysis/NOTES.md`, "MIDI").
 ```sh
 sudo pacman -S --needed base-devel dkms linux-headers   # of linux-zen-headers enz.
 cd linux
-makepkg -si
+makepkg -s
+sudo pacman -U snd-usb-phasex64-dkms-*.pkg.tar.zst phasex64-panel-*.pkg.tar.zst
 ```
 
-Daarmee wordt de driver via DKMS gebouwd, ook na elke kernelupdate. Daarna de
-kaart uit- en weer inpluggen, of:
+`makepkg -s` bouwt alle drie de pakketten; installeer de driver en het
+configuratiescherm zoals hierboven. Het derde, `phasex64-wireplumber`, is
+optioneel en verandert het gedrag van WirePlumber voor de hele machine -
+lees eerst "PipeWire / JACK" hieronder. (`makepkg -si` zou alle drie in
+één keer installeren, ook dat pakket.)
+
+DKMS bouwt de driver, ook na elke kernelupdate. Daarna de kaart uit- en
+weer inpluggen, of:
 
 ```sh
 sudo modprobe snd-usb-phasex64
@@ -227,12 +234,12 @@ en herstelt het bij elke volgende herstart/herverbinding - een
 eenmalige fix per machine, geen terugkerende stap.
 
 Eenmaal bevestigd, installeer het systeembreed voor elke gebruiker op
-de machine via het optionele pakket `phasex64-wireplumber`
-(`makepkg -si` vanuit deze map `linux/`, net als de driver/het panel -
-zie "Installeren op Arch Linux" hierboven):
+de machine via het optionele pakket `phasex64-wireplumber`,
+dat `makepkg -s` in deze map `linux/` samen met de driver en het
+configuratiescherm bouwt (zie "Installeren op Arch Linux" hierboven):
 
 ```sh
-sudo pacman -S phasex64-wireplumber
+sudo pacman -U phasex64-wireplumber-*.pkg.tar.zst
 ```
 
 Dit is een apart, optioneel pakket in plaats van onderdeel van
