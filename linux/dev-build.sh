@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-only
 # Copyright (C) 2026 flarkflarkflark
-# Build snd-usb-phasex64 outside the repo, because kbuild's M= can't handle
-# the space in this repo's path ("PHASE X64"). Never writes build output
-# back into the repo.
+# Developer build of snd-usb-phasex64: copies the source to ~/px64 and builds
+# there with W=1, failing on any compiler warning. Keeps build output out of
+# the repo and works from any checkout path (kbuild's M= can't handle spaces).
+# A plain `make -C linux/snd-usb-phasex64` also works from a path without
+# spaces.
 set -euo pipefail
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/snd-usb-phasex64" && pwd)"
