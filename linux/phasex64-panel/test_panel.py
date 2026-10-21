@@ -1410,5 +1410,295 @@ class SkinnedLoopbackIndicatorTest(unittest.TestCase):
         self.assertEqual(self.ui.loopback_labels[name]["text"], panel.LOOPBACK_STATUS[name])
 
 
+
+# Real output captured from pw-metadata / pw-top (PipeWire 1.6.9), trimmed.
+PW_SETTINGS_SAMPLE = """Found "settings" metadata 31
+update: id:0 key:'log.level' value:'2' type:''
+update: id:0 key:'clock.rate' value:'48000' type:''
+update: id:0 key:'clock.allowed-rates' value:'[ 48000 ]' type:''
+update: id:0 key:'clock.quantum' value:'1024' type:''
+update: id:0 key:'clock.min-quantum' value:'32' type:''
+update: id:0 key:'clock.max-quantum' value:'2048' type:''
+update: id:0 key:'clock.force-quantum' value:'{forced}' type:''
+update: id:0 key:'clock.force-rate' value:'0' type:''
+"""
+
+PW_TOP_SAMPLE = """S   ID  QUANT   RATE    WAIT    BUSY   W/Q   B/Q  ERR FORMAT           NAME\x20
+C   29      0      0    ---     ---   ---   ---     0                  Dummy-Driver
+C   64      0      0    ---     ---   ---   ---     0                  alsa_input.usb-MUSONIK_GmbH_MUSONIK_GmbH_PHASE_X64_USB_no_serial_number-00.pro-input-0
+S   ID  QUANT   RATE    WAIT    BUSY   W/Q   B/Q  ERR FORMAT           NAME\x20
+I   29      0      0   0.0us   0.0us  ???   ???     0                  Dummy-Driver
+S   30      0      0    ---     ---   ---   ---     0                  Freewheel-Driver
+I   64     64  48000   9.2us   1.5us  0.01  0.00    9    S32LE 6 48000 alsa_input.usb-MUSONIK_GmbH_MUSONIK_GmbH_PHASE_X64_USB_no_serial_number-00.pro-input-0
+I   63      0      0   2.9us   3.4us  0.00  0.00    0    S24LE 4 48000  + alsa_output.usb-MUSONIK_GmbH_MUSONIK_GmbH_PHASE_X64_USB_no_serial_number-00.pro-output-0
+S   50      0      0    ---     ---   ---   ---     0                  alsa_output.pci-0000_06_00.6.analog-stereo
+"""
+
+
+def completed(stdout="", returncode=0, stderr=""):
+    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+class BufferParsingTest(unittest.TestCase):
+    def test_settings_parsed(self):
+        settings = panel.parse_pw_settings(PW_SETTINGS_SAMPLE.format(forced=64))
+        self.assertEqual(settings["clock.force-quantum"], "64")
+        self.assertEqual(settings["clock.min-quantum"], "32")
+        self.assertEqual(settings["clock.rate"], "48000")
+        self.assertEqual(panel.parse_pw_settings("can't connect: Host is down\n"), {})
+
+    def test_running_quantum_from_last_block_driver_line(self):
+        self.assertEqual(panel.parse_pw_top_quantum(PW_TOP_SAMPLE), (64, 48000))
+
+    def test_first_block_only_idle_and_garbage_are_unknown(self):
+        first_block = PW_TOP_SAMPLE.split("S   ID", 2)
+        self.assertIsNone(panel.parse_pw_top_quantum("S   ID" + first_block[1]))
+        idle = "\n".join(l for l in PW_TOP_SAMPLE.splitlines() if " 64  48000" not in l)
+        self.assertIsNone(panel.parse_pw_top_quantum(idle))
+        self.assertIsNone(panel.parse_pw_top_quantum("Can't connect: Host is down\n"))
+        self.assertIsNone(panel.parse_pw_top_quantum(""))
+
+    def test_follower_lines_are_ignored_and_phase_driver_preferred(self):
+        follower_only = PW_TOP_SAMPLE.replace(
+            "I   64     64  48000", "I   64      0      0").replace(
+            "I   63      0      0", "I   63    256  48000")
+        self.assertIsNone(panel.parse_pw_top_quantum(follower_only))
+        other_driver_first = PW_TOP_SAMPLE.replace(
+            "I   29      0      0   0.0us   0.0us  ???   ???     0                  Dummy-Driver",
+            "I   29    512  44100   1.0us   1.0us  0.01  0.00    0    S16LE 2 44100 other-driver")
+        self.assertEqual(panel.parse_pw_top_quantum(other_driver_first), (64, 48000))
+
+    def test_latency_text(self):
+        self.assertEqual(panel.format_buffer_latency(64, 48000), "64 · 1.3 ms")
+        self.assertEqual(panel.format_buffer_latency(64, None), "64 · 1.3 ms")
+        self.assertEqual(panel.format_buffer_latency(1024, 44100), "1024 · 23.2 ms")
+
+    def test_apply_command(self):
+        self.assertEqual(panel.PipeWireBuffer.apply_command(0),
+                         ["pw-metadata", "-n", "settings", "0", "clock.force-quantum", "0"])
+        self.assertEqual(panel.PipeWireBuffer.apply_command(64)[-1], "64")
+        for bad in (32, 63, 96, 4096, -1):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                panel.PipeWireBuffer.apply_command(bad)
+
+    def test_label_width_fits_every_text(self):
+        # A screenshot caught "auto: 1024 · 21.3 ms" clipped at 16 chars.
+        texts = [panel.format_buffer_latency(q, r) for q in panel.BUFFER_CHOICES[1:]
+                 for r in (44100, 48000, 88200, 96000)]
+        texts += ["auto: " + text for text in texts]
+        self.assertLessEqual(max(map(len, texts)), panel.BUFFER_LABEL_CHARS)
+
+    def test_choices_never_offer_less_than_64(self):
+        self.assertEqual(panel.BUFFER_CHOICES[0], 0)
+        self.assertTrue(all(q >= 64 for q in panel.BUFFER_CHOICES[1:]))
+
+
+class PipeWireBufferBackendTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.buffer = panel.PipeWireBuffer(conf_dir=self.tmp.name)
+        self.which = mock.patch.object(panel.shutil, "which", side_effect=lambda name: "/usr/bin/" + name)
+        self.which.start()
+        self.addCleanup(self.which.stop)
+
+    def test_apply_runs_pw_metadata_with_auto_as_zero(self):
+        with mock.patch.object(panel.subprocess, "run", return_value=completed()) as run:
+            self.assertEqual(self.buffer.apply(0), 0)
+        args = run.call_args.args[0]
+        self.assertEqual(args, ["/usr/bin/pw-metadata", "-n", "settings", "0", "clock.force-quantum", "0"])
+        self.assertEqual(run.call_args.kwargs["env"]["LC_ALL"], "C")
+
+    def test_apply_failure_and_missing_tool_raise(self):
+        with mock.patch.object(panel.subprocess, "run",
+                               return_value=completed(returncode=255, stderr="can't connect: Host is down")):
+            with self.assertRaisesRegex(RuntimeError, "Host is down"):
+                self.buffer.apply(128)
+        with mock.patch.object(panel.shutil, "which", return_value=None), \
+                mock.patch.object(panel.subprocess, "run") as run:
+            with self.assertRaises(RuntimeError):
+                self.buffer.apply(128)
+            run.assert_not_called()
+
+    def test_state_forced_skips_pw_top(self):
+        with mock.patch.object(panel.subprocess, "run",
+                               return_value=completed(PW_SETTINGS_SAMPLE.format(forced=64))) as run:
+            state = self.buffer.state()
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual((state["available"], state["forced"], state["running"], state["min"]),
+                         (True, 64, None, 32))
+
+    def test_state_auto_reads_running_quantum(self):
+        outputs = iter([completed(PW_SETTINGS_SAMPLE.format(forced=0)), completed(PW_TOP_SAMPLE)])
+        with mock.patch.object(panel.subprocess, "run", side_effect=lambda *a, **k: next(outputs)) as run:
+            state = self.buffer.state()
+        self.assertEqual(run.call_args_list[1].args[0], ["/usr/bin/pw-top", "-b", "-n", "2"])
+        self.assertEqual((state["forced"], state["running"]), (0, (64, 48000)))
+
+    def test_without_pipewire_state_is_unavailable(self):
+        with mock.patch.object(panel.subprocess, "run",
+                               return_value=completed(returncode=255, stderr="can't connect")):
+            self.assertFalse(self.buffer.state()["available"])
+        with mock.patch.object(panel.shutil, "which", return_value=None):
+            self.assertFalse(self.buffer.state()["available"])
+        with mock.patch.object(panel.subprocess, "run",
+                               side_effect=subprocess.TimeoutExpired("pw-metadata", 2)):
+            self.assertFalse(self.buffer.state()["available"])
+
+    def test_pw_top_failure_backs_off(self):
+        with mock.patch.object(panel.subprocess, "run",
+                               side_effect=subprocess.TimeoutExpired("pw-top", 1)) as run:
+            self.assertIsNone(self.buffer.running_quantum())
+            self.assertIsNone(self.buffer.running_quantum())
+        self.assertEqual(run.call_count, 1)
+
+    def test_persist_writes_and_removes_only_its_own_file(self):
+        other = Path(self.tmp.name) / "10-something-else.conf"
+        other.write_text("context.properties = { }\n")
+        self.assertEqual(self.buffer.persist(64, 32), 64)
+        text = self.buffer.conf_path.read_text()
+        self.assertIn("default.clock.quantum = 64", text)
+        self.assertNotIn("min-quantum", text)
+        self.assertEqual(self.buffer.persisted(), 64)
+        self.buffer.persist(64, 128)
+        self.assertIn("default.clock.min-quantum = 64", self.buffer.conf_path.read_text())
+        self.assertIsNone(self.buffer.persist(None))
+        self.assertFalse(self.buffer.conf_path.exists())
+        self.assertIsNone(self.buffer.persisted())
+        self.buffer.persist(256)
+        self.buffer.persist(0)
+        self.assertFalse(self.buffer.conf_path.exists())
+        self.buffer.persist(None)  # removing an absent file is fine
+        self.assertEqual(other.read_text(), "context.properties = { }\n")
+        self.assertEqual(sorted(p.name for p in Path(self.tmp.name).iterdir()), [other.name])
+        with self.assertRaises(ValueError):
+            self.buffer.persist(32)
+
+    def test_default_location_follows_xdg_config_home(self):
+        with tempfile.TemporaryDirectory() as home, \
+                mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": home}):
+            buffer = panel.PipeWireBuffer()
+            self.assertEqual(buffer.conf_path,
+                             Path(home) / "pipewire" / "pipewire.conf.d" / "20-phasex64-buffer.conf")
+            buffer.persist(128)
+            self.assertIn("default.clock.quantum = 128", buffer.conf_path.read_text())
+
+    def test_requests_run_on_the_worker(self):
+        mixer = panel.FakeMixer()
+        io = panel.PanelIO(mixer)
+        self.addCleanup(io.close)
+        io.submit("buffer_set", 128)
+        io.submit("buffer_keep", (128, 32, True))
+        io.submit("buffer_state")
+        results = [io.results.get(timeout=2) for _ in range(3)]
+        self.assertEqual(results[0], ("buffer_set", 128, None))
+        self.assertEqual(results[1], ("buffer_keep", (128, True), None))
+        self.assertEqual(results[2][2], None)
+        self.assertEqual(results[2][1]["forced"], 128)
+        io.submit("buffer_set", 32)
+        kind, result, error = io.results.get(timeout=2)
+        self.assertEqual((kind, result), ("buffer_set", None))
+        self.assertIn("32", error)
+
+
+@unittest.skipUnless(os.environ.get("PX64_GUI_TESTS") == "1", "run explicitly under Xvfb")
+class BufferGUITest(unittest.TestCase):
+    def setUp(self):
+        self.guard = mock.patch.object(panel.subprocess, "run", side_effect=AssertionError("hardware access"))
+        self.guard.start()
+        self.version_guard = mock.patch.object(panel, "read_driver_version", return_value=(0, 9, 0))
+        self.version_guard.start()
+        self.root = panel.tk.Tk()
+        self.mixer = panel.FakeMixer(demo=True)
+
+    def tearDown(self):
+        self.ui.close()
+        self.version_guard.stop()
+        self.guard.stop()
+        gc.collect()  # see StudioGUITest.tearDown's own comment
+
+    def start(self, skin=None):
+        self.ui = panel.Panel(self.root, self.mixer, skin)
+        self.pump(1.3)
+
+    def pump(self, seconds):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            self.root.update()
+            time.sleep(.005)
+
+    def choose(self, label):
+        self.ui.buffer_choice.set(label)
+        self.ui.buffer_choice.event_generate("<<ComboboxSelected>>")
+        self.pump(1.3)
+
+    def test_dropdown_values_and_auto_label(self):
+        self.start()
+        self.assertEqual(list(self.ui.buffer_choice.cget("values")),
+                         ["Auto", "64", "128", "256", "512", "1024", "2048"])
+        self.assertEqual(str(self.ui.buffer_choice.cget("state")), "readonly")
+        self.assertEqual(self.ui.buffer_choice.get(), "Auto")
+        self.assertEqual(self.ui.buffer_label.cget("text"), "auto: 1024 · 21.3 ms")
+
+    def test_select_applies_and_shows_latency(self):
+        self.start()
+        self.choose("128")
+        self.assertEqual(self.mixer.buffer.applied, [128])
+        self.assertIn("Buffer set: 128 · 2.7 ms", self.ui.notice.cget("text"))
+        self.assertEqual(self.ui.buffer_label.cget("text"), "128 · 2.7 ms")
+        self.choose("Auto")
+        self.assertEqual(self.mixer.buffer.applied, [128, 0])
+        self.assertIn("Auto", self.ui.notice.cget("text"))
+
+    def test_external_change_is_followed(self):
+        self.start()
+        self.mixer.buffer.forced = 512
+        self.pump(1.3)
+        self.assertEqual(self.ui.buffer_choice.get(), "512")
+        self.assertEqual(self.ui.buffer_label.cget("text"), "512 · 10.7 ms")
+
+    def test_disabled_without_pipewire(self):
+        self.mixer.buffer = panel.FakePipeWireBuffer(available=False)
+        self.start()
+        self.assertEqual(str(self.ui.buffer_choice.cget("state")), "disabled")
+        self.assertEqual(str(self.ui.buffer_keep.cget("state")), "disabled")
+        self.assertEqual(self.ui.buffer_label.cget("text"), "—")
+        self.assertIn("Requires PipeWire", self.ui.buffer_tooltip())
+        self.ui.on_buffer_selected()
+        self.ui.on_buffer_keep()
+        self.pump(.3)
+        self.assertEqual(self.mixer.buffer.applied, [])
+
+    def test_keep_after_restart(self):
+        self.start()
+        self.ui.buffer_keep.invoke()  # Auto selected: nothing to keep
+        self.pump(.3)
+        self.assertFalse(self.ui.buffer_keep_var.get())
+        self.assertIsNone(self.mixer.buffer.kept)
+        self.choose("256")
+        self.ui.buffer_keep.invoke()
+        self.pump(1.3)
+        self.assertEqual(self.mixer.buffer.kept, 256)
+        self.assertTrue(self.ui.buffer_keep_var.get())
+        self.assertIn("256", self.ui.notice.cget("text"))
+        self.choose("64")  # size change while kept: the kept size follows
+        self.assertEqual(self.mixer.buffer.kept, 64)
+        self.assertIn("Buffer set: 64", self.ui.notice.cget("text"))
+        self.ui.buffer_keep.invoke()
+        self.pump(1.3)
+        self.assertIsNone(self.mixer.buffer.kept)
+        self.assertFalse(self.ui.buffer_keep_var.get())
+
+    def test_skinned_layout_has_its_own_row(self):
+        with tempfile.TemporaryDirectory() as skin_dir:
+            with open(os.path.join(skin_dir, "script.txt"), "w", encoding="latin-1") as f:
+                f.write("[MAIN]\nBACKGROUND=bg.png\n")
+            img = panel.tk.PhotoImage(master=self.root, width=10, height=10)
+            img.write(os.path.join(skin_dir, "bg.png"), format="png")
+            self.start(skin_dir)
+        self.assertIsNot(self.ui.buffer_choice.master.master, self.ui.save_button.master)
+        self.assertEqual(str(self.ui.buffer_choice.cget("state")), "readonly")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

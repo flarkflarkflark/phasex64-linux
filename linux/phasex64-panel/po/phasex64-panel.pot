@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: phasex64-panel 0.9.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-21 00:52+0200\n"
+"POT-Creation-Date: 2026-10-21 12:36+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,51 +17,51 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: phasex64-panel:261
+#: phasex64-panel:262
 msgid ""
 "Microphone (XLR, Ch.1 = left) or Hi-Z/Line (jack, Ch.2 = right). Gain and "
 "48V are set on the unit itself, not here."
 msgstr ""
 
-#: phasex64-panel:263
+#: phasex64-panel:264
 msgid "Turntable input with phono preamp. Use with Phono RIAA."
 msgstr ""
 
-#: phasex64-panel:264
+#: phasex64-panel:265
 msgid "Line-level input (RCA)."
 msgstr ""
 
-#: phasex64-panel:278
+#: phasex64-panel:279
 msgid ""
 "Records Out 3/4's own analog output (incl. Direct), not a copy of In 3/4. If "
 "you monitor this input back to Out 3/4 in your DAW, disable that track's "
 "input monitoring - otherwise it's a feedback loop."
 msgstr ""
 
-#: phasex64-panel:282
+#: phasex64-panel:283
 msgid ""
 "Records Out 1/2's own analog output (incl. Direct), not a copy of In 1/2. If "
 "you monitor this input back to Out 1/2 in your DAW, disable that track's "
 "input monitoring - otherwise it's a feedback loop."
 msgstr ""
 
-#: phasex64-panel:286
+#: phasex64-panel:287
 msgid "Internal sound module (route name in the driver: Sound Module)."
 msgstr ""
 
-#: phasex64-panel:287
+#: phasex64-panel:288
 msgid "Input muted."
 msgstr ""
 
-#: phasex64-panel:307
+#: phasex64-panel:308
 msgid "Records OUT 3/4 output (analog, incl. Direct)"
 msgstr ""
 
-#: phasex64-panel:308
+#: phasex64-panel:309
 msgid "Records OUT 1/2 output (analog, incl. Direct)"
 msgstr ""
 
-#: phasex64-panel:312
+#: phasex64-panel:313
 msgid ""
 "Capturing Out 3/4's own analog output stage (Direct + PCM as routed) - "
 "hardware-confirmed, not a copy of In 3/4. Roughly 0.3-0.8 dB lower than the "
@@ -72,7 +72,7 @@ msgid ""
 "it's a feedback loop."
 msgstr ""
 
-#: phasex64-panel:321
+#: phasex64-panel:322
 msgid ""
 "Capturing Out 1/2's own analog output stage (Direct + PCM as routed) - "
 "presumed, not independently hardware-tested (Loopback 3/4's own behaviour "
@@ -81,11 +81,11 @@ msgid ""
 "- otherwise it's a feedback loop."
 msgstr ""
 
-#: phasex64-panel:335
+#: phasex64-panel:336
 msgid "Capture 5/6 = Loopback Out 1/2 (digital, PCM only, pre-Direct)"
 msgstr ""
 
-#: phasex64-panel:337
+#: phasex64-panel:338
 msgid ""
 "Always-on digital tap of the PCM/DSP data sent to Out 1/2, bit-exact, before "
 "the Direct/PCM output mixing stage - not affected by the Direct or PCM Out "
@@ -96,11 +96,11 @@ msgid ""
 "how to use it."
 msgstr ""
 
-#: phasex64-panel:355
+#: phasex64-panel:356
 msgid "Feedback loop: both loopbacks + Direct on both outputs"
 msgstr ""
 
-#: phasex64-panel:357
+#: phasex64-panel:358
 msgid ""
 "Both Loopback sources selected with Direct on for both outputs closes an "
 "analog loop (In 1/2 -> Direct -> Out 1/2 -> Loopback -> In 3/4 -> Direct -> "
@@ -110,348 +110,435 @@ msgid ""
 "one output, or use only one Loopback source, to break the loop."
 msgstr ""
 
-#: phasex64-panel:384 phasex64-panel:1836
+#: phasex64-panel:385 phasex64-panel:2068
 msgid "DSP"
 msgstr ""
 
-#: phasex64-panel:512
+#: phasex64-panel:513
 msgid "not loaded"
 msgstr ""
 
-#: phasex64-panel:750
+#: phasex64-panel:869 phasex64-panel:888
+#, python-brace-format
+msgid "Unsupported buffer size: {size}"
+msgstr ""
+
+#: phasex64-panel:875
+msgid "pw-metadata is not available"
+msgstr ""
+
+#: phasex64-panel:963
 msgid "ALSA control access unavailable"
 msgstr ""
 
-#: phasex64-panel:752
+#: phasex64-panel:965
 msgid "ALSA control request failed"
 msgstr ""
 
-#: phasex64-panel:776
+#: phasex64-panel:989
 #, python-brace-format
 msgid "Control unavailable: {name}"
 msgstr ""
 
-#: phasex64-panel:1049
+#: phasex64-panel:1263
 msgid "Record vinyl"
 msgstr ""
 
-#: phasex64-panel:1049
+#: phasex64-panel:1263
 msgid "Monitor"
 msgstr ""
 
-#: phasex64-panel:1066
+#: phasex64-panel:1280
 msgid "Preset must contain exactly the codec and RIAA controls"
 msgstr ""
 
-#: phasex64-panel:1070
+#: phasex64-panel:1284
 #, python-brace-format
 msgid "Invalid source: {name}"
 msgstr ""
 
-#: phasex64-panel:1072
+#: phasex64-panel:1286
 #, python-brace-format
 msgid "Expected an on/off value: {name}"
 msgstr ""
 
-#: phasex64-panel:1075
+#: phasex64-panel:1289
 msgid "Direct mono 1/2 requires Mic/HiZ/Line and Direct on"
 msgstr ""
 
-#: phasex64-panel:1083
+#: phasex64-panel:1297
 #, python-brace-format
 msgid "Cannot save: control unavailable: {name}"
 msgstr ""
 
-#: phasex64-panel:1089
+#: phasex64-panel:1303
 #, python-brace-format
 msgid "Invalid control value: {name}"
 msgstr ""
 
-#: phasex64-panel:1127
+#: phasex64-panel:1341
 msgid "Use letters, numbers, spaces, - or _ in a preset name"
 msgstr ""
 
-#: phasex64-panel:1136
+#: phasex64-panel:1350
 msgid "Preset is too large"
 msgstr ""
 
-#: phasex64-panel:1139
+#: phasex64-panel:1353
 msgid "Unsupported preset schema"
 msgstr ""
 
-#: phasex64-panel:1146
+#: phasex64-panel:1360
 msgid "Choose a different name; built-in examples are read-only"
 msgstr ""
 
-#: phasex64-panel:1369
+#: phasex64-panel:1590
 msgid "L / R   ·   SAMPLE PEAK"
 msgstr ""
 
-#: phasex64-panel:1396
+#: phasex64-panel:1617
 msgid "−∞ dBFS"
 msgstr ""
 
-#: phasex64-panel:1396
+#: phasex64-panel:1617
 #, python-brace-format
 msgid "{value:.1f} dBFS"
 msgstr ""
 
-#: phasex64-panel:1408
+#: phasex64-panel:1629
 msgid "needs driver ≥ 0.1.11.5"
 msgstr ""
 
-#: phasex64-panel:1543 phasex64-panel:2173 phasex64-panel:2286
+#: phasex64-panel:1774 phasex64-panel:2541 phasex64-panel:2654
 msgid "Connecting…"
 msgstr ""
 
-#: phasex64-panel:1544
+#: phasex64-panel:1775
 msgid "PHASE X64 · Studio control"
 msgstr ""
 
-#: phasex64-panel:1554
+#: phasex64-panel:1786
 #, python-brace-format
 msgid "Phono RIAA {pair}"
 msgstr ""
 
-#: phasex64-panel:1689
+#: phasex64-panel:1921
 msgid ""
 "Applies the RIAA equalisation curve in the driver (as on Windows). Only "
 "active when the source is Phono."
 msgstr ""
 
-#: phasex64-panel:1693
+#: phasex64-panel:1925
 msgid "(select Phono first)"
 msgstr ""
 
-#: phasex64-panel:1703
+#: phasex64-panel:1935
 msgid ""
 "Sums Ch.1 (mic) and Ch.2 (Hi-Z/Line) to both sides, instead of mic left / Hi-"
 "Z right."
 msgstr ""
 
-#: phasex64-panel:1708
+#: phasex64-panel:1940
 msgid "(needs Mic/HiZ/Line source and Direct on)"
 msgstr ""
 
-#: phasex64-panel:1726
+#: phasex64-panel:1958
 msgid "USB AUDIO  /  STUDIO CONTROL"
 msgstr ""
 
-#: phasex64-panel:1728
+#: phasex64-panel:1960
 msgid "ABOUT"
 msgstr ""
 
-#: phasex64-panel:1730
+#: phasex64-panel:1962
 msgid "Panel and driver version, card status."
 msgstr ""
 
-#: phasex64-panel:1733
+#: phasex64-panel:1965
 msgid "DEMO SIGNAL"
 msgstr ""
 
-#: phasex64-panel:1737
+#: phasex64-panel:1969
 msgid "Simulate an audio signal for the peak meters (demo mode only)."
 msgstr ""
 
-#: phasex64-panel:1755
+#: phasex64-panel:1987
 msgid "In 1/2"
 msgstr ""
 
-#: phasex64-panel:1755
+#: phasex64-panel:1987
 msgid "In 3/4"
 msgstr ""
 
-#: phasex64-panel:1756
+#: phasex64-panel:1988
 msgid "Out 1/2"
 msgstr ""
 
-#: phasex64-panel:1756
+#: phasex64-panel:1988
 msgid "Out 3/4"
 msgstr ""
 
-#: phasex64-panel:1768
+#: phasex64-panel:2000
 msgid "CAPTURE SOURCE"
 msgstr ""
 
-#: phasex64-panel:1768
+#: phasex64-panel:2000
 msgid "OUTPUT ROUTING"
 msgstr ""
 
-#: phasex64-panel:1805
+#: phasex64-panel:2037
 msgid "PHONO RIAA"
 msgstr ""
 
-#: phasex64-panel:1824
+#: phasex64-panel:2056
 msgid "DIRECT"
 msgstr ""
 
-#: phasex64-panel:1825
+#: phasex64-panel:2057
 msgid ""
 "Analog direct monitoring of the input, without latency. Not RIAA-equalised, "
 "so phono sounds thin."
 msgstr ""
 
-#: phasex64-panel:1827
+#: phasex64-panel:2059
 msgid "PCM"
 msgstr ""
 
-#: phasex64-panel:1828
+#: phasex64-panel:2060
 msgid "Playback from your software (e.g. your DAW) to this output."
 msgstr ""
 
-#: phasex64-panel:1829
+#: phasex64-panel:2061
 msgid "PCM MONO"
 msgstr ""
 
-#: phasex64-panel:1830
+#: phasex64-panel:2062
 msgid "Sums left and right to mono."
 msgstr ""
 
-#: phasex64-panel:1833
+#: phasex64-panel:2065
 msgid "DIRECT MONO"
 msgstr ""
 
-#: phasex64-panel:1840
+#: phasex64-panel:2072
 msgid ""
 "Routes can be combined.\n"
 "Mono follows its hardware interlock."
 msgstr ""
 
-#: phasex64-panel:1842
+#: phasex64-panel:2074
 msgid ""
 "Routes can be combined.\n"
 "DSP is the sound-module route."
 msgstr ""
 
-#: phasex64-panel:1847
+#: phasex64-panel:2079
 msgid "PCM peaks only · excludes Direct/DSP"
 msgstr ""
 
-#: phasex64-panel:1868
+#: phasex64-panel:2100
 msgid ""
 "Sample peak of the PCM signal. Needs driver ≥ 0.1.11.5.\n"
 "Readout: peak hold ~3 s, then live · click the number to reset."
 msgstr ""
 
-#: phasex64-panel:1911
+#: phasex64-panel:2143
+msgid "Auto"
+msgstr ""
+
+#: phasex64-panel:2148
+msgid "BUFFER"
+msgstr ""
+
+#: phasex64-panel:2160
+msgid ""
+"One buffer period at the current sample rate. The total round-trip latency "
+"through the interface is higher."
+msgstr ""
+
+#: phasex64-panel:2164
+msgid "Keep after restart"
+msgstr ""
+
+#: phasex64-panel:2170
+msgid ""
+"Also make this size PipeWire's default, in ~/.config/pipewire/"
+"pipewire.conf.d/20-phasex64-buffer.conf. Takes effect for new sessions after "
+"a PipeWire restart; the size chosen here is applied immediately anyway. "
+"Untick to remove that file."
+msgstr ""
+
+#: phasex64-panel:2180
+msgid ""
+"Requires PipeWire. With JACK2 set the buffer in JACK; with plain ALSA the "
+"application chooses it."
+msgstr ""
+
+#: phasex64-panel:2182
+msgid ""
+"PipeWire buffer size (quantum) in samples, applied live to the whole "
+"PipeWire graph. Smaller means less latency and more CPU load. Stable on "
+"hardware: 64, 128, 256 and 1024; 512 and 2048 untested but within that "
+"range. A live change can cause a short click. Auto lets PipeWire decide."
+msgstr ""
+
+#: phasex64-panel:2214
+#, python-brace-format
+msgid "auto: {latency}"
+msgstr ""
+
+#: phasex64-panel:2216
+msgid "auto"
+msgstr ""
+
+#: phasex64-panel:2236
+msgid "Choose a buffer size first; Auto is already PipeWire's default."
+msgstr ""
+
+#: phasex64-panel:2250
+#, python-brace-format
+msgid "Buffer change failed: {error}"
+msgstr ""
+
+#: phasex64-panel:2253
+#, python-brace-format
+msgid "Buffer set: {latency}."
+msgstr ""
+
+#: phasex64-panel:2257
+msgid "Buffer set: Auto (PipeWire decides)."
+msgstr ""
+
+#: phasex64-panel:2262
+#, python-brace-format
+msgid ""
+"Kept after restart: buffer {size} becomes PipeWire's default after the next "
+"PipeWire restart."
+msgstr ""
+
+#: phasex64-panel:2266
+msgid "No longer kept after restart."
+msgstr ""
+
+#: phasex64-panel:2271
 msgid "PRESET"
 msgstr ""
 
-#: phasex64-panel:1923
+#: phasex64-panel:2283
 msgid "Choose a saved or built-in preset, then Load."
 msgstr ""
 
-#: phasex64-panel:1924
+#: phasex64-panel:2284
 msgid "LOAD"
 msgstr ""
 
-#: phasex64-panel:1926
+#: phasex64-panel:2286
 msgid "Apply the selected preset's codec routing and RIAA settings."
 msgstr ""
 
-#: phasex64-panel:1927
+#: phasex64-panel:2287
 msgid "SAVE AS…"
 msgstr ""
 
-#: phasex64-panel:1929
+#: phasex64-panel:2289
 msgid "Save the current codec routing and RIAA settings as a new preset."
 msgstr ""
 
-#: phasex64-panel:1930
+#: phasex64-panel:2298
 msgid "CLOCK…"
 msgstr ""
 
-#: phasex64-panel:1932
+#: phasex64-panel:2300
 msgid "Switch between the internal clock and the digital (S/PDIF) input."
 msgstr ""
 
-#: phasex64-panel:1933
+#: phasex64-panel:2301
 msgid "MIDI…"
 msgstr ""
 
-#: phasex64-panel:1935
+#: phasex64-panel:2303
 msgid "Open the MIDI input message monitor."
 msgstr ""
 
-#: phasex64-panel:1939
+#: phasex64-panel:2307
 msgid ""
 "MIDI IN activity - lights briefly on bytes received. A running MIDI clock "
 "keeps this lit almost continuously (it's ~48 messages/second), which is "
 "expected, not a fault."
 msgstr ""
 
-#: phasex64-panel:1942
+#: phasex64-panel:2310
 msgid ""
 "MIDI OUT activity - lights briefly on bytes transmitted. Shows activity "
 "only, never message content (see the MIDI monitor window)."
 msgstr ""
 
-#: phasex64-panel:1946
+#: phasex64-panel:2314
 msgid "IN"
 msgstr ""
 
-#: phasex64-panel:1946
+#: phasex64-panel:2314
 msgid "OUT"
 msgstr ""
 
-#: phasex64-panel:1953
+#: phasex64-panel:2321
 msgid "Codec changes apply live while a stream is running."
 msgstr ""
 
-#: phasex64-panel:1955
+#: phasex64-panel:2323
 msgid ""
 "Codec changes during a stream apply at the next start · live apply comes "
 "with v0.1.12."
 msgstr ""
 
-#: phasex64-panel:1979
+#: phasex64-panel:2347
 msgid "Clock: internal word clock, or synced to the digital (S/PDIF) input."
 msgstr ""
 
-#: phasex64-panel:1980
+#: phasex64-panel:2348
 msgid "Digital: whether a digital input signal is currently locked."
 msgstr ""
 
-#: phasex64-panel:1981
+#: phasex64-panel:2349
 msgid ""
 "Stream: whether a PCM stream (playback or capture) is running, and its rate."
 msgstr ""
 
-#: phasex64-panel:1982
+#: phasex64-panel:2350
 msgid "MIDI: input monitor window state; independent of PCM stream state."
 msgstr ""
 
-#: phasex64-panel:1993
+#: phasex64-panel:2361
 msgid "Applying control state…"
 msgstr ""
 
-#: phasex64-panel:2005
+#: phasex64-panel:2373
 #, python-brace-format
 msgid "Preset controls unavailable: {names}"
 msgstr ""
 
-#: phasex64-panel:2012
+#: phasex64-panel:2380
 msgid "Save preset"
 msgstr ""
 
-#: phasex64-panel:2012
+#: phasex64-panel:2380
 msgid "Preset name"
 msgstr ""
 
-#: phasex64-panel:2017
+#: phasex64-panel:2385
 msgid "Replace preset?"
 msgstr ""
 
-#: phasex64-panel:2021
+#: phasex64-panel:2389
 #, python-brace-format
 msgid "Saved {name}"
 msgstr ""
 
-#: phasex64-panel:2031
+#: phasex64-panel:2399
 msgid "demo · no hardware accessed"
 msgstr ""
 
-#: phasex64-panel:2032
+#: phasex64-panel:2400
 #, python-brace-format
 msgid ""
 "PHASE X64 Studio control\n"
@@ -464,19 +551,19 @@ msgid ""
 "Stream activity is derived from ALSA /proc status."
 msgstr ""
 
-#: phasex64-panel:2040
+#: phasex64-panel:2408
 msgid "About PHASE X64"
 msgstr ""
 
-#: phasex64-panel:2046 phasex64-panel:2545
+#: phasex64-panel:2414 phasex64-panel:2921
 msgid "OK"
 msgstr ""
 
-#: phasex64-panel:2074
+#: phasex64-panel:2442
 msgid "Clock control unavailable"
 msgstr ""
 
-#: phasex64-panel:2078
+#: phasex64-panel:2446
 #, python-brace-format
 msgid ""
 "Clock source: {current}\n"
@@ -485,52 +572,52 @@ msgid ""
 "Switch clock source to {target}?"
 msgstr ""
 
-#: phasex64-panel:2080 phasex64-panel:2082
+#: phasex64-panel:2448 phasex64-panel:2450
 msgid "internal"
 msgstr ""
 
-#: phasex64-panel:2080 phasex64-panel:2082
+#: phasex64-panel:2448 phasex64-panel:2450
 msgid "digital input"
 msgstr ""
 
-#: phasex64-panel:2081 phasex64-panel:2378
+#: phasex64-panel:2449 phasex64-panel:2747
 msgid "locked"
 msgstr ""
 
-#: phasex64-panel:2081
+#: phasex64-panel:2449
 msgid "no signal"
 msgstr ""
 
-#: phasex64-panel:2083
+#: phasex64-panel:2451
 msgid "Switch clock source?"
 msgstr ""
 
-#: phasex64-panel:2165 phasex64-panel:2171
+#: phasex64-panel:2533 phasex64-panel:2539
 msgid "MIDI IN MONITOR"
 msgstr ""
 
-#: phasex64-panel:2177
+#: phasex64-panel:2545
 msgid ""
 "The input monitor follows the dynamically discovered PHASE ALSA-seq port. IN/"
 "OUT activity comes only from ALSA rawmidi byte counters."
 msgstr ""
 
-#: phasex64-panel:2203
+#: phasex64-panel:2571
 msgid "Show Clock / Active Sensing"
 msgstr ""
 
-#: phasex64-panel:2208
+#: phasex64-panel:2576
 msgid ""
 "Off by default - a running MIDI clock alone is 48 messages/second, mostly "
 "noise for a human reading this log. Only affects new messages from now on, "
 "not history already shown."
 msgstr ""
 
-#: phasex64-panel:2213
+#: phasex64-panel:2581
 msgid "Show system events"
 msgstr ""
 
-#: phasex64-panel:2218
+#: phasex64-panel:2586
 msgid ""
 "Off by default - other ALSA clients connecting/disconnecting (e.g. \"Port "
 "subscribed\"), not MIDI performance data. A separate toggle from Clock/"
@@ -538,135 +625,135 @@ msgid ""
 "shown."
 msgstr ""
 
-#: phasex64-panel:2222
+#: phasex64-panel:2590
 msgid "CLOSE"
 msgstr ""
 
-#: phasex64-panel:2224
+#: phasex64-panel:2592
 msgid "Close the MIDI monitor and stop its aseqdump process."
 msgstr ""
 
-#: phasex64-panel:2246
+#: phasex64-panel:2614
 msgid "Closing…"
 msgstr ""
 
-#: phasex64-panel:2281
+#: phasex64-panel:2649
 msgid "Connected"
 msgstr ""
 
-#: phasex64-panel:2281
+#: phasex64-panel:2649
 msgid "Waiting for MIDI input…"
 msgstr ""
 
-#: phasex64-panel:2282
+#: phasex64-panel:2650
 msgid "Disconnected"
 msgstr ""
 
-#: phasex64-panel:2282
+#: phasex64-panel:2650
 msgid "PHASE MIDI port disconnected."
 msgstr ""
 
-#: phasex64-panel:2283 phasex64-panel:2289
+#: phasex64-panel:2651 phasex64-panel:2657
 msgid "Monitor unavailable"
 msgstr ""
 
-#: phasex64-panel:2284 phasex64-panel:2290
+#: phasex64-panel:2652 phasex64-panel:2658
 msgid "aseqdump is unavailable or could not subscribe."
 msgstr ""
 
-#: phasex64-panel:2285
+#: phasex64-panel:2653
 msgid "Demo"
 msgstr ""
 
-#: phasex64-panel:2285
+#: phasex64-panel:2653
 msgid "MIDI monitor is offline in demo mode."
 msgstr ""
 
-#: phasex64-panel:2286
+#: phasex64-panel:2654
 msgid "Resolving PHASE MIDI port…"
 msgstr ""
 
-#: phasex64-panel:2307
+#: phasex64-panel:2675
 msgid ""
 "OUT shows activity only (byte counter) - outgoing message content cannot be "
 "observed."
 msgstr ""
 
-#: phasex64-panel:2311
+#: phasex64-panel:2679
 msgid "No audio stream is running - MIDI only flows while one is active."
 msgstr ""
 
-#: phasex64-panel:2369
+#: phasex64-panel:2738
 msgid "demo"
 msgstr ""
 
-#: phasex64-panel:2370
+#: phasex64-panel:2739
 msgid "not connected"
 msgstr ""
 
-#: phasex64-panel:2371
+#: phasex64-panel:2740
 #, python-brace-format
 msgid "hw:{card} · PHASE X64"
 msgstr ""
 
-#: phasex64-panel:2377
+#: phasex64-panel:2746
 msgid "Internal"
 msgstr ""
 
-#: phasex64-panel:2377
+#: phasex64-panel:2746
 msgid "Digital"
 msgstr ""
 
-#: phasex64-panel:2378
+#: phasex64-panel:2747
 msgid "unlocked"
 msgstr ""
 
-#: phasex64-panel:2383
+#: phasex64-panel:2752
 #, python-brace-format
 msgid "running {rate}"
 msgstr ""
 
-#: phasex64-panel:2383
+#: phasex64-panel:2752
 msgid "running"
 msgstr ""
 
-#: phasex64-panel:2385
+#: phasex64-panel:2754
 msgid "idle"
 msgstr ""
 
-#: phasex64-panel:2387 phasex64-panel:2407
+#: phasex64-panel:2756 phasex64-panel:2776
 msgid "unknown"
 msgstr ""
 
-#: phasex64-panel:2405
+#: phasex64-panel:2774
 msgid "available"
 msgstr ""
 
-#: phasex64-panel:2406
+#: phasex64-panel:2775
 msgid "unavailable"
 msgstr ""
 
-#: phasex64-panel:2409
+#: phasex64-panel:2778
 #, python-brace-format
 msgid ""
 "● {status}    |    Clock: {clock}    |    Digital: {lock}    |    Stream: "
 "{stream}    |    MIDI: {midi}"
 msgstr ""
 
-#: phasex64-panel:2458
+#: phasex64-panel:2827
 #, python-brace-format
 msgid "Apply failed (some controls may have changed): {error}"
 msgstr ""
 
-#: phasex64-panel:2460
+#: phasex64-panel:2829
 msgid "Applied live."
 msgstr ""
 
-#: phasex64-panel:2462
+#: phasex64-panel:2831
 msgid ""
 "Control state written · restart an active stream to apply codec routing."
 msgstr ""
 
-#: phasex64-panel:2542
+#: phasex64-panel:2918
 msgid "PHASE X64 panel is already running"
 msgstr ""

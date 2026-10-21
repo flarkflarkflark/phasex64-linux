@@ -8,7 +8,8 @@ pkgver=0.9.0
 # project jumped there from 0.1.13; the panel was separately numbered
 # 0.2.0 before that). pkgrel is only for packaging-only changes, per
 # normal Arch convention, and resets to 1 whenever pkgver changes.
-pkgrel=1
+# rel 2: panel-only - BUFFER control for PipeWire's quantum.
+pkgrel=2
 arch=(any)
 license=(GPL-2.0-only)
 makedepends=(gettext librsvg)
