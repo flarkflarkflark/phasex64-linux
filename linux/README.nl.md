@@ -26,7 +26,17 @@ eerdere driverversies.
 | Mixer | alle knoppen van het Windows-paneel, plus "Clock Source" en "Digital Input Lock" |
 
 Afspelen en opnemen draaien altijd op dezelfde samplerate (één klok in het
-apparaat).
+apparaat). **Geteste samplerates:** 48 kHz is de samplerate van dagelijks gebruik
+en van de functietests sinds driver v0.1.10 (live wijzigingen, MIDI,
+PipeWire/REAPER, buffergroottes). 44,1, 88,2 en 96 kHz zijn één
+keer op hardware getest, met v0.1.10 op 2026-10-14 (direct via ALSA,
+zonder PipeWire): per samplerate 12 s afspelen en opnemen met een toon van
+1 kHz via een analoge loopback, realtime, zonder fouten, plus wisselen van
+samplerate zonder opnieuw in te pluggen (`tests/hw/REPORT.md`,
+"Acceptance tests (2026-10-14...)"); 44,1 kHz ook in de
+bit-exactheidstest van opnamekanalen 5/6
+(`../analysis/loopback-and-monitoring.md`). Ze zijn niet opnieuw getest met
+de latere functies of via PipeWire.
 
 MIDI werkt alleen zolang er een audiostream (afspelen of opnemen) actief is
 - bijvoorbeeld met REAPER open en een lopende stream, of `arecord`/`aplay`
@@ -39,11 +49,18 @@ niet "gewapend" staan (zie `../analysis/NOTES.md`, "MIDI").
 ```sh
 sudo pacman -S --needed base-devel dkms linux-headers   # of linux-zen-headers enz.
 cd linux
-makepkg -si
+makepkg -s
+sudo pacman -U snd-usb-phasex64-dkms-*.pkg.tar.zst phasex64-panel-*.pkg.tar.zst
 ```
 
-Daarmee wordt de driver via DKMS gebouwd, ook na elke kernelupdate. Daarna de
-kaart uit- en weer inpluggen, of:
+`makepkg -s` bouwt alle drie de pakketten; installeer de driver en het
+configuratiescherm zoals hierboven. Het derde, `phasex64-wireplumber`, is
+optioneel en verandert het gedrag van WirePlumber voor de hele machine -
+lees eerst "PipeWire / JACK" hieronder. (`makepkg -si` zou alle drie in
+één keer installeren, ook dat pakket.)
+
+DKMS bouwt de driver, ook na elke kernelupdate. Daarna de kaart uit- en
+weer inpluggen, of:
 
 ```sh
 sudo modprobe snd-usb-phasex64
@@ -227,12 +244,12 @@ en herstelt het bij elke volgende herstart/herverbinding - een
 eenmalige fix per machine, geen terugkerende stap.
 
 Eenmaal bevestigd, installeer het systeembreed voor elke gebruiker op
-de machine via het optionele pakket `phasex64-wireplumber`
-(`makepkg -si` vanuit deze map `linux/`, net als de driver/het panel -
-zie "Installeren op Arch Linux" hierboven):
+de machine via het optionele pakket `phasex64-wireplumber`,
+dat `makepkg -s` in deze map `linux/` samen met de driver en het
+configuratiescherm bouwt (zie "Installeren op Arch Linux" hierboven):
 
 ```sh
-sudo pacman -S phasex64-wireplumber
+sudo pacman -U phasex64-wireplumber-*.pkg.tar.zst
 ```
 
 Dit is een apart, optioneel pakket in plaats van onderdeel van

@@ -213,11 +213,13 @@ and corrected before any test ran).
 Full writeup in `analysis/NOTES.md`; summary relevant to interpreting the
 tests below:
 
-- **Front**: Mic/Line XLR-combo (Ch.1, own gain + 48V LED), HiZ/Line jack
-  (Ch.2, own gain), headphone jack + volume.
+- **Front**: Phono/Aux RCA inputs for Ch.1/2 and Ch.3/4, Mic/Line
+  XLR-combo (Ch.1, own gain + 48V LED), HiZ/Line jack (Ch.2, own gain),
+  headphone jack + volume.
 - **Rear**: Power (9V DC), USB-B, MIDI Out/In, Digital (S/PDIF coax)
   Out/In, Outputs Ch.3/4 (RCA), Inserts (MIC/Line + HiZ/Line), Outputs
-  Ch.1/2 (jacks), Phono/Aux RCA inputs for Ch.1/2 and Ch.3/4.
+  Ch.1/2 (jacks). (Corrected 2026-10-21: the Phono/Aux RCA inputs were
+  listed on the rear here; they are on the front.)
 - **Side switches, hardware-only** (no USB/ALSA control exists for any of
   these): `48V`, `Ch.1 Line/Mic`, `Ch.2 Line/HiZ`, `Phones Ch. 1/2|3/4`,
   `Ch.1/2 Aux/Phono`, `Ch.3/4 Aux/Phono`. These sit upstream of the ADC
@@ -673,8 +675,9 @@ table in `analysis/NOTES.md` exactly: `Loopback 3/4` (`Out 3/4 -> In 1/2`)
 is the only `In 1/2` item that puts a signal on ch1/2, and only while that
 item is selected; same for `Loopback 1/2` on ch3/4. The other items show
 silence on ch1-4 in this test setup because nothing was physically cabled
-into the front Mic/HiZ/Line jack, the rear Sound-Module input, or (per the
-correction above) the rear Aux/Phono input for ch3/4 either, at the time.
+into the front Mic/HiZ/Line jack, nothing played on the internal Sound
+Module (DSP) route, and (per the correction above) nothing was cabled into
+the front Aux/Phono input for ch3/4 either, at the time.
 ch5/ch6 show *something* on every single item, including `Mute` —
 confirming (again) that the digital S/PDIF mirror is completely
 independent of the ADC mux, exactly as found in the v0.1.3 channel-map
