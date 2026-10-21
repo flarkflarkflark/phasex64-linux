@@ -1,0 +1,2658 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (C) 2026 flarkflarkflark
+"""Control panel for the TerraTec PHASE X64 USB on Linux.
+
+Native dark control surface. Every routing button maps to an ALSA control.
+No PCM device is opened, including for meters. Use --demo without hardware.
+
+The original skin (background and button images) is not shipped. Import it once
+from the Windows driver package:
+
+    phasex64-panel --import-skin /path/to/MUSONIK_PHASE_X64_USB_X64_2.9.34
+
+The native interface is the default. Imported artwork is opt-in with --skin.
+"""
+
+import argparse
+import fcntl
+import gettext
+import json
+import logging
+import math
+import os
+from pathlib import Path
+import queue
+import re
+import signal
+import shutil
+import subprocess
+import sys
+import threading
+import tempfile
+import time
+import tkinter as tk
+from tkinter import messagebox, simpledialog, ttk
+
+APP = "phasex64-panel"
+VERSION = "0.9.0"
+DOMAIN = "phasex64-panel"
+
+_LOG = logging.getLogger(APP)
+
+# `setpriv --pdeathsig TERM -- <cmd>` execs <cmd> directly (same PID, same
+# for stdbuf's own exec of its target right after) - so wrapping a child
+# command with this sets PR_SET_PDEATHSIG on the real aseqdump/alsactl
+# process itself, which the kernel delivers the moment the THREAD that
+# spawned it exits (not merely when the process does). Both call sites
+# that use this (Mixer.start_change_monitor(), MidiMonitor.ensure()) are
+# only ever invoked from PanelIO's own worker thread, which lives as long
+# as the panel does (see PanelIO.run()'s "state"/"midi_start" handlers) -
+# moving either spawn onto a short-lived thread would silently defeat
+# this, so don't.
+_SETPRIV = shutil.which("setpriv")
+_pdeathsig_warned = False
+
+
+def _with_pdeathsig(cmd):
+    """Wrap cmd so it's killed if the panel is, even via SIGKILL - falls
+    back to the plain command (reaped only via the panel's own close()/
+    signal-handler path, as before this existed) if setpriv isn't
+    installed, logging that fact once, at debug level.
+    """
+    global _pdeathsig_warned
+    if _SETPRIV is None:
+        if not _pdeathsig_warned:
+            _pdeathsig_warned = True
+            _LOG.debug("setpriv not found; %s won't have PDEATHSIG set", cmd[0])
+        return cmd
+    return [_SETPRIV, "--pdeathsig", "TERM", "--"] + cmd
+
+# ---------------------------------------------------------------------------
+# i18n: gettext, following the system locale (LC_ALL/LC_MESSAGES/LANG). Must
+# be set up before any module-level string below is wrapped in _() - those
+# are evaluated once, at import time, same as every other top-level
+# statement in this file.
+#
+# Translation boundary (see po/README.md and analysis/NOTES.md "ALSA
+# control names"): _() wraps visible UI labels only - headings, button
+# text, hints, status words, tooltips, preset *display* names. ALSA
+# control names (dict keys like "In 1/2 Capture Source", RIAA_NAMES,
+# PEAK_NAMES, CLOCK, LOCK) and ADC_SOURCE_ITEMS' enum item identifiers
+# ("Phono", "Aux", "Mic-HiZ-Line", ...) are API strings sent to amixer by
+# name or used as internal identity keys - never translated. The one
+# exception is "Sound Module", which is never shown to the user at all;
+# its only UI presence is the "DSP" relabel in source_label(), which *is*
+# translated, same as every other button label.
+
+
+def _locale_search_dirs():
+    """Search order for compiled .mo files: next to the script (development,
+    before `make install`/packaging - see po/README.md), then the standard
+    system location (where the PKGBUILD installs it)."""
+    return [str(Path(__file__).resolve().parent / "locale"), "/usr/share/locale"]
+
+
+def _load_translation():
+    for localedir in _locale_search_dirs():
+        if gettext.find(DOMAIN, localedir=localedir):
+            return gettext.translation(DOMAIN, localedir=localedir)
+    return gettext.NullTranslations()  # English source strings pass through
+
+
+_translation = _load_translation()
+_ = _translation.gettext
+
+PEAK_MAX = 0x7fffff
+PEAK_NAMES = tuple(f"{direction} {pair} Peak"
+                   for direction in ("In", "Out") for pair in ("1/2", "3/4"))
+RIAA_NAMES = tuple(f"Phono RIAA {pair} Capture Switch" for pair in ("1/2", "3/4"))
+
+# Live codec apply landed in v0.1.12 (analysis/v0.1.12-plan.md) - MODULE_VERSION()
+# is exposed by the kernel at this path for any loaded module, no new ALSA
+# control needed. Absent (module not loaded, e.g. --demo) or unparseable:
+# treated as "not live-apply-capable", the same as any version below 0.1.12.
+DRIVER_VERSION_SYSFS = "/sys/module/snd_usb_phasex64/version"
+LIVE_APPLY_MIN_VERSION = (0, 1, 12)
+PROC_ASOUND = "/proc/asound"
+MIDI_LED_HOLD_SECONDS = .2
+MIDI_EVENT_QUEUE_SIZE = 256
+MIDI_MONITOR_MAX_LINES = 200
+MIDI_MONITOR_BATCH_SIZE = 64
+
+
+def read_driver_version():
+    # This is a cosmetic hint, not core functionality - any failure here
+    # (missing file, a sysfs read racing a module unload, unexpected
+    # content) must fall back to None (treated as "not live-apply-capable")
+    # rather than ever taking the whole panel down at startup.
+    try:
+        with open(DRIVER_VERSION_SYSFS, encoding="ascii") as f:
+            raw = f.read().strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    m = re.match(r"(\d+(?:\.\d+)*)", raw)
+    return tuple(int(x) for x in m.group(1).split(".")) if m else None
+
+
+def version_at_least(version, minimum):
+    if version is None:
+        return False
+    width = max(len(version), len(minimum))
+
+    def pad(v):
+        return tuple(v) + (0,) * (width - len(v))
+
+    return pad(version) >= pad(minimum)
+
+
+BG, CARD, EDGE = "#14181c", "#20262c", "#343e47"
+TEXT, MUTED, ACCENT = "#edf2f4", "#95a2ac", "#c5f36b"
+CYAN, DIM, RED = "#66d9d0", "#55616b", "#ff706b"
+# Addendum (2026-10-19): a caution tier between ACCENT (informational,
+# e.g. the normal loopback indicator) and RED (actual errors, e.g. "Apply
+# failed") didn't exist in this palette yet - added for the analog
+# feedback-loop warning below. 7.5:1 contrast on CARD, 8.8:1 on BG (same
+# WCAG check DIM_TEXT's own comment above already applies) - computed,
+# not guessed.
+AMBER = "#f0a830"
+# DIM (2.4:1 on CARD) is for disabled-state text only - WCAG 1.4.3 exempts
+# inactive UI components. Anything else readable uses DIM_TEXT (4.87:1 on
+# CARD, computed and verified against both CARD and BG), which actually
+# passes AA for normal-size text - DIM itself does not.
+DIM_TEXT = "#87939d"
+TOOLTIP_BG = "#2a3239"
+SKIN_DIRS = [
+    os.path.join(os.environ.get("XDG_DATA_HOME",
+                                os.path.expanduser("~/.local/share")), APP, "skin"),
+    os.path.join("/usr/share", APP, "skin"),
+]
+ICON_SIZES = (256, 128, 64, 48, 32, 24, 16)
+
+
+def find_icon_images():
+    """Best-effort window-icon images (own design, icon.svg - see
+    build-icons.sh/PKGBUILD), largest first so root.iconphoto() can pick
+    whichever fits each context. Searches next to the script (development,
+    before build-icons.sh has even run) and the installed hicolor theme;
+    returns [] rather than raising if neither has anything - a missing
+    icon is cosmetic, never fatal.
+    """
+    here = Path(__file__).resolve().parent / "icons"
+    images = []
+    for size in ICON_SIZES:
+        for candidate in (here / f"phasex64-panel-{size}.png",
+                          Path(f"/usr/share/icons/hicolor/{size}x{size}/apps/phasex64-panel.png")):
+            if candidate.is_file():
+                try:
+                    images.append(tk.PhotoImage(file=str(candidate)))
+                except (tk.TclError, RuntimeError):
+                    # RuntimeError: Tk raises this (not TclError) for "no
+                    # default root window yet" - e.g. a test that mocks
+                    # tk.Tk() itself, so there's no real root for
+                    # PhotoImage to attach to. Best effort either way.
+                    pass
+                break
+    return images
+
+# v0.1.4+: the ADC input mux is exposed as two ALSA enums (one source
+# selected at a time, matching the hardware and the Windows panel's radio
+# grouping) instead of independent switches - see analysis/NOTES.md,
+# "ALSA control names". Item order here must match the driver's
+# px_adc_12_sources / px_adc_34_sources exactly, since amixer is driven by
+# numeric index. These item strings are enum identifiers, not UI text -
+# never translated (see the i18n note above); source_label() is the only
+# translated rendering of them, and only for "Sound Module" -> "DSP".
+ADC_SOURCE_ITEMS = {
+    "In 1/2 Capture Source": [
+        "Mic-HiZ-Line", "Phono", "Aux", "Loopback 3/4", "Sound Module", "Mute"],
+    "In 3/4 Capture Source": [
+        "Phono", "Aux", "Loopback 1/2", "Sound Module", "Mute"],
+}
+
+# script.txt button number -> (enum control name, item name). Radio-style:
+# clicking selects that item, never toggles.
+ENUM_BUTTONS = {
+    1: ("In 1/2 Capture Source", "Mic-HiZ-Line"),
+    2: ("In 1/2 Capture Source", "Aux"),
+    3: ("In 1/2 Capture Source", "Phono"),
+    4: ("In 1/2 Capture Source", "Loopback 3/4"),
+    5: ("In 1/2 Capture Source", "Sound Module"),
+    8: ("In 3/4 Capture Source", "Aux"),
+    9: ("In 3/4 Capture Source", "Phono"),
+    10: ("In 3/4 Capture Source", "Loopback 1/2"),
+    11: ("In 3/4 Capture Source", "Sound Module"),
+}
+
+# script.txt button number -> ALSA boolean switch control name. These stay
+# independent toggles - several can be on at once (e.g. Direct and PCM
+# both feeding the same output).
+SWITCH_BUTTONS = {
+    6: "Direct 1/2 Playback Switch",
+    7: "Direct 1/2 Mono Playback Switch",
+    12: "Direct 3/4 Playback Switch",
+    13: "Sound Module 3/4 Playback Switch",
+    27: "PCM 1/2 Mono Playback Switch",
+    28: "PCM 3/4 Mono Playback Switch",
+    30: "PCM 1/2 Playback Switch",
+    31: "PCM 3/4 Playback Switch",
+}
+RATE_BUTTONS = {21: 44100, 22: 48000, 23: 88200, 24: 96000}
+BTN_INFO, BTN_CLOSE = 26, 29
+CLOCK = "Clock Source"
+LOCK = "Digital Input Lock"
+
+CODEC_NAMES = tuple(ADC_SOURCE_ITEMS) + tuple(SWITCH_BUTTONS.values())
+PRESET_NAMES = CODEC_NAMES + RIAA_NAMES
+STATE_NAMES = PRESET_NAMES + (CLOCK, LOCK, "Digital Input Rate")
+
+# Tooltips for the ADC source items, keyed by the untranslated enum
+# identifier (ADC_SOURCE_ITEMS values) - short and functional, per-item,
+# translatable like any other UI string even though the item identifier
+# itself is not (see the i18n note above).
+ITEM_TOOLTIPS = {
+    # Addendum (2026-10-20, hardware-confirmed): Ch.1 (front combo
+    # socket) is capture channel 1 (L); Ch.2 (front Hi-Z/Line jack) is
+    # channel 2 (R). The Ch.1 side switch selects the CONNECTOR, not
+    # just a gain stage - "Mic" uses the XLR part only (with 48V, if
+    # enabled), "Line" the jack part only; a jack plugged in with the
+    # switch on Mic reads only preamp noise. 48V is only ever present on
+    # the Ch.1 XLR pin, never on the Ch.2 jack. See analysis/NOTES.md,
+    # "Front inputs: Mic / Hi-Z / Line" for the measured gain ranges.
+    "Mic-HiZ-Line": _("Microphone (XLR, Ch.1 = left) or Hi-Z/Line (jack, Ch.2 = "
+                      "right). Gain and 48V are set on the unit itself, not here."),
+    "Phono": _("Turntable input with phono preamp. Use with Phono RIAA."),
+    "Aux": _("Line-level input (RCA)."),
+    # Addendum (2026-10-19, hardware-confirmed): this is the card's own
+    # analog output stage (Direct + PCM as routed, after the output
+    # mux), not a copy of the other input pair - confirmed by switching
+    # Direct off on Out 3/4 (PCM stayed on throughout, just nothing
+    # playing through it) while a signal kept playing on In 3/4's own
+    # Aux input: Loopback 3/4 on In 1/2 dropped to the analog noise
+    # floor instead of still following that signal, then followed real
+    # PCM audio almost exactly once something actually played through
+    # that same still-on PCM path (see analysis/loopback-and-
+    # monitoring.md, "Loopback 3/4 / Loopback 1/2"). Warn about the
+    # feedback-loop risk here too, not just in the panel's own live
+    # indicator - this tooltip is reachable before the source is even
+    # selected.
+    "Loopback 3/4": _("Records Out 3/4's own analog output (incl. Direct), not a "
+                      "copy of In 3/4. If you monitor this input back to Out 3/4 "
+                      "in your DAW, disable that track's input monitoring - "
+                      "otherwise it's a feedback loop."),
+    "Loopback 1/2": _("Records Out 1/2's own analog output (incl. Direct), not a "
+                      "copy of In 1/2. If you monitor this input back to Out 1/2 "
+                      "in your DAW, disable that track's input monitoring - "
+                      "otherwise it's a feedback loop."),
+    "Sound Module": _("Internal sound module (route name in the driver: Sound Module)."),
+    "Mute": _("Input muted."),
+}
+
+# Addendum (2026-10-19): live "you're recording the other pair's output"
+# indicator - shown in that input's own area whenever its Capture Source is
+# actually set to a Loopback item (not just hovering the item, unlike
+# ITEM_TOOLTIPS above). LOOPBACK_ITEM says which enum item counts;
+# LOOPBACK_STATUS/LOOPBACK_STATUS_TOOLTIP are keyed the same way as
+# ADC_SOURCE_ITEMS (by the enum control's own name). Wording mirrors the
+# hardware-confirmed mechanism (analog output stage, not a copy of the
+# other input - see ITEM_TOOLTIPS above and analysis/loopback-and-
+# monitoring.md). "In 3/4 Capture Source"'s own Loopback 1/2 behaviour is
+# presumed to mirror Loopback 3/4's (same mechanism, vendor-named the same
+# way - "Out 1/2 -> In 3/4" - see analysis/NOTES.md's button-mapping table)
+# but not independently hardware-tested; said so plainly in its tooltip.
+LOOPBACK_ITEM = {
+    "In 1/2 Capture Source": "Loopback 3/4",
+    "In 3/4 Capture Source": "Loopback 1/2",
+}
+LOOPBACK_STATUS = {
+    "In 1/2 Capture Source": _("Records OUT 3/4 output (analog, incl. Direct)"),
+    "In 3/4 Capture Source": _("Records OUT 1/2 output (analog, incl. Direct)"),
+}
+LOOPBACK_STATUS_TOOLTIP = {
+    "In 1/2 Capture Source": _(
+        "Capturing Out 3/4's own analog output stage (Direct + PCM as "
+        "routed) - hardware-confirmed, not a copy of In 3/4. Roughly "
+        "0.3-0.8 dB lower than the source, down to the analog noise floor "
+        "(~-85 dBFS) when Out 3/4 is silent. Different signal from "
+        "capture channels 5/6, which only ever reflect Out 1/2's digital "
+        "PCM content, pre-Direct. If a track in your DAW monitors this "
+        "input back to Out 3/4, turn off that track's input monitoring - "
+        "otherwise it's a feedback loop."),
+    "In 3/4 Capture Source": _(
+        "Capturing Out 1/2's own analog output stage (Direct + PCM as "
+        "routed) - presumed, not independently hardware-tested (Loopback "
+        "3/4's own behaviour was; see analysis/loopback-and-monitoring.md). "
+        "If a track in your DAW monitors this input back to Out 1/2, turn "
+        "off that track's input monitoring - otherwise it's a feedback "
+        "loop."),
+}
+
+# Addendum (2026-10-19): static note near the Out 1/2 meter - capture
+# channels 5/6 have no ALSA control of their own (no mixer name, no peak
+# meter), so this is the only place in the panel that explains they exist
+# at all. Contrast with the Loopback indicator above is deliberate: 5/6 is
+# digital/pre-Direct/Out-1/2-only; Loopback is analog/post-mux/either pair
+# depending on which Capture Source you pick.
+CAPTURE_56_TEXT = _("Capture 5/6 = Loopback Out 1/2 (digital, PCM only, pre-Direct)")
+CAPTURE_56_TOOLTIP = _(
+    "Always-on digital tap of the PCM/DSP data sent to Out 1/2, bit-exact, "
+    "before the Direct/PCM output mixing stage - not affected by the "
+    "Direct or PCM Out 1/2 switches, and not the same mechanism as the "
+    "Loopback capture sources (which are analog and after that mixing "
+    "stage). No ALSA control of its own - available directly in a "
+    "6-channel capture stream (In 1/2, In 3/4, 5/6). See linux/README.md, "
+    "\"PipeWire / JACK\" and \"Recording what you hear\", for how to use it.")
+
+# Addendum (2026-10-19): a closed analog loop - hardware-confirmed, see
+# analysis/loopback-and-monitoring.md - when BOTH Loopback sources are
+# selected and BOTH outputs' Direct switch is on at once: In 1/2 -> Direct
+# -> Out 1/2 -> Loopback 1/2 -> In 3/4 -> Direct -> Out 3/4 -> Loopback
+# 3/4 -> In 1/2. Measured: both inputs rose to about -68.7 dBFS vs. an
+# ~-85 dBFS floor with the loop open - still only noise at unity gain, but
+# it can ring/oscillate if gain goes up. Distinct from the plain
+# single-pair "you're recording an output" warning above (LOOPBACK_STATUS)
+# - this one overrides *both* indicators at once, only when all four
+# conditions hold simultaneously.
+FEEDBACK_LOOP_TEXT = _("Feedback loop: both loopbacks + Direct on both outputs")
+FEEDBACK_LOOP_TOOLTIP = _(
+    "Both Loopback sources selected with Direct on for both outputs "
+    "closes an analog loop (In 1/2 -> Direct -> Out 1/2 -> Loopback -> "
+    "In 3/4 -> Direct -> Out 3/4 -> Loopback -> In 1/2) - hardware-"
+    "confirmed to raise both inputs to about -68.7 dBFS (vs. an ~-85 "
+    "dBFS floor with the loop open). Only noise at unity gain, but it "
+    "can ring/oscillate if gain goes up. Turn off Direct on one output, "
+    "or use only one Loopback source, to break the loop.")
+
+
+def feedback_loop_active(vals):
+    """True iff the closed analog loop above is currently selected. Pure
+    function of `vals` (the same control-value dict render_controls()
+    already has) - testable directly, no live Panel instance needed."""
+    def selected(name):
+        items = ADC_SOURCE_ITEMS[name]
+        try:
+            index = int(vals.get(name, -1))
+        except ValueError:
+            return None
+        return items[index] if 0 <= index < len(items) else None
+    return (selected("In 1/2 Capture Source") == "Loopback 3/4" and
+            selected("In 3/4 Capture Source") == "Loopback 1/2" and
+            vals.get("Direct 1/2 Playback Switch") == "on" and
+            vals.get("Direct 3/4 Playback Switch") == "on")
+
+
+def source_label(item):
+    return _("DSP") if item == "Sound Module" else item
+
+
+def parse_values(output):
+    values, name = {}, None
+    for line in output.splitlines():
+        match = re.search(r"name='([^']*)'", line)
+        if match:
+            name = match.group(1)
+        match = re.match(r"\s*: values=(.*)", line)
+        if match and name:
+            values[name], name = match.group(1).strip(), None
+    return values
+
+
+def parse_peak(value):
+    try:
+        pair = tuple(int(part.strip()) for part in value.split(","))
+        return pair if len(pair) == 2 and all(0 <= x <= PEAK_MAX for x in pair) else None
+    except (ValueError, AttributeError):
+        return None
+
+
+def parse_midi_counters(output):
+    """Return (Rx bytes, Tx bytes) from one ALSA rawmidi proc file.
+
+    The file contains separate Input/Output sections, but the labels are
+    unique and stable enough that no section parser is needed. A missing
+    direction stays None rather than looking like a zero-byte counter.
+    """
+    values = {}
+    for direction in ("Rx", "Tx"):
+        match = re.search(rf"^\s*{direction}\s+bytes\s*:\s*(\d+)\s*$",
+                          output, re.MULTILINE)
+        if match:
+            values[direction] = int(match.group(1))
+    return values.get("Rx"), values.get("Tx")
+
+
+def parse_phase_seq_port(output):
+    """Resolve the current PHASE ALSA-seq input port from `aseqdump -l`."""
+    for line in output.splitlines():
+        match = re.match(r"^\s*(\d+:\d+)\s+(.+)$", line)
+        if match and re.search(r"\bPHASE\s+X64\b", match.group(2), re.IGNORECASE):
+            return match.group(1)
+    return None
+
+
+# Addendum (2026-10-19): the LAST run of 2+ spaces on a line separates
+# aseqdump's fixed 32-char-padded event-name field from its free-form data
+# (format strings confirmed via `strings aseqdump`:
+# "%3d:%-3d  %-32.32s %s\n", event names under 25 chars so always padded
+# with several trailing spaces) - a robust anchor without needing to
+# byte-count the variable-width "%3d:%-3d" source field at the start.
+_MIDI_LAST_GAP_RE = re.compile(r"  +")
+# Channel-voice events (Note on/off, Control change, Program change,
+# Channel/Poly aftertouch, Pitch bend, ...) all start their data with the
+# 0-based channel number then a comma (same format strings) - events with
+# no channel (Clock, Start, Stop, System exclusive, Song position
+# pointer, ...) don't match this shape and pass through unchanged, by
+# construction, not by enumerating every event name.
+_MIDI_CHANNEL_PREFIX_RE = re.compile(r"^(\d+)(,.*)$")
+
+
+def format_midi_event_line(line):
+    """Reformat one raw `aseqdump` event line for display: channels shown
+    as 1-16, matching MIDI convention - aseqdump's own -R/--raw-view
+    default (unchanged by this panel) prints 0-15. Best-effort by
+    construction (see the regexes above), not a byte-exact grammar - this
+    project cannot run aseqdump against the real port to verify the exact
+    column widths for every aseqdump version, so it degrades to passing
+    the line through unchanged rather than risk corrupting anything it
+    doesn't confidently recognise.
+    """
+    line = line.rstrip("\n")
+    last = None
+    for last in _MIDI_LAST_GAP_RE.finditer(line):
+        pass
+    if last is None:
+        return line
+    data = line[last.end():]
+    match = _MIDI_CHANNEL_PREFIX_RE.match(data)
+    if not match:
+        return line
+    channel, rest = match.groups()
+    return line[:last.end()] + str(int(channel) + 1) + rest
+
+
+# Addendum (2026-10-19): Clock/Active Sensing are pure heartbeat messages
+# with no information content for a human reading the monitor - a steady
+# 120 BPM clock alone is 48 lines/second (confirmed on hardware, exactly
+# 480 clocks in 10s - see analysis/NOTES.md). Filtered out by default,
+# with a toggle to show them; matched by event name, not by position, so
+# it stays correct regardless of channel/data formatting changes above.
+_MIDI_CLOCK_EVENT_RE = re.compile(r"^\s*\d+:\d+\s+(Clock|Active Sensing)\b")
+
+# Addendum (2026-10-19, hardware test): ALSA-seq client 0 is always the
+# kernel's own System Timer/Announce client (confirmed in this project's
+# own `aseqdump -l` listing - "0:0 System Timer", "0:1 System Announce" -
+# a stable ALSA convention, not specific to this device) - events from it
+# (confirmed on hardware: "Port subscribed", other clients' own connect/
+# disconnect traffic) are ALSA sequencer *graph* meta-events, not MIDI
+# performance data at all - a different kind of noise from Clock/Active
+# Sensing above, filtered by a *separate* toggle rather than folded into
+# that one: someone debugging "why won't anything connect to this port"
+# wants exactly these without a 48 msg/s clock flood, and someone
+# debugging clock timing wants the opposite - combining the two toggles
+# would force either person to see noise they didn't ask for. Matched by
+# source client number, not by event name, since "client 0" is the
+# stable invariant here, not any particular event name list.
+_MIDI_SYSTEM_EVENT_RE = re.compile(r"^\s*0:\d+\s+")
+
+
+# A continuation line of a multi-line SysEx dump is just hex byte pairs
+# (aseqdump's own "%s%02x"/" %02X" format strings) - no source address
+# prefix, unlike every real event line.
+_MIDI_HEX_CONTINUATION_RE = re.compile(r"^\s*(?:[0-9A-Fa-f]{2}\s*)+$")
+_MIDI_PENDING_MAX_LEN = 2000
+
+
+def peak_db(value):
+    return max(-60.0, 20 * math.log10(value / PEAK_MAX)) if value > 0 else -60.0
+
+
+def driver_version():
+    try:
+        return Path("/sys/module/snd_usb_phasex64/version").read_text().strip()
+    except OSError:
+        return _("not loaded")
+
+
+# ---------------------------------------------------------------------------
+# ALSA access through amixer
+
+def find_card():
+    try:
+        with open("/proc/asound/cards") as f:
+            for line in f:
+                m = re.match(r"\s*(\d+)\s+\[(\S+)\s*\]:\s*(\S+)", line)
+                if m and m.group(3) == "PhaseX64":
+                    return m.group(1)
+    except OSError:
+        pass
+    return None
+
+
+class MidiMonitor:
+    """Owned line-oriented `aseqdump` monitor for the PHASE ALSA-seq port.
+
+    Port discovery is repeated only while the monitor window is open, so
+    card/client renumbering and disconnect/reconnect need no fixed ALSA-seq
+    address. This lifecycle deliberately knows nothing about PCM stream state.
+    """
+    def __init__(self):
+        self.events = queue.Queue(maxsize=MIDI_EVENT_QUEUE_SIZE)
+        self._lock = threading.Lock()
+        self._proc = None
+        self._thread = None
+        self._port = None
+        self._status = "closed"
+        self._closed = False
+
+    def _discover(self):
+        try:
+            result = subprocess.run(["aseqdump", "-l"], capture_output=True,
+                                    text=True, timeout=2.0)
+        except (OSError, subprocess.TimeoutExpired):
+            return None, "unavailable"
+        if result.returncode:
+            return None, "unavailable"
+        port = parse_phase_seq_port(result.stdout)
+        return (port, "connected") if port else (None, "disconnected")
+
+    def _put_event(self, line):
+        line = line.strip()[:240]
+        if not line:
+            return
+        try:
+            self.events.put_nowait(line)
+        except queue.Full:
+            # Preserve the newest activity under a flood. Dropping and adding
+            # are individual thread-safe Queue operations; a simultaneous UI
+            # drain can simply make the retry unnecessary.
+            try:
+                self.events.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self.events.put_nowait(line)
+            except queue.Full:
+                pass
+
+    def _read(self, proc):
+        returncode = None
+        # Buffered line for a "System exclusive" event that might still be
+        # getting hex-byte continuation lines appended (see
+        # _MIDI_HEX_CONTINUATION_RE's own comment) - most likely aseqdump
+        # already puts the whole dump on one line and a wrapped terminal
+        # was the only thing splitting it, but this handles genuine
+        # multi-line output too rather than assuming either way.
+        pending = None
+        try:
+            for line in proc.stdout:
+                if re.match(r"^\s*\d+:\d+\s+", line):
+                    # A new real event line always ends whatever SysEx was
+                    # being accumulated, even if that SysEx never got any
+                    # continuation lines at all (the common case).
+                    if pending is not None:
+                        self._put_event(pending)
+                        pending = None
+                    formatted = format_midi_event_line(line)
+                    if "System exclusive" in formatted:
+                        pending = formatted
+                    else:
+                        self._put_event(formatted)
+                elif pending is not None and _MIDI_HEX_CONTINUATION_RE.match(line):
+                    if len(pending) < _MIDI_PENDING_MAX_LEN:
+                        pending = pending + " " + line.strip()
+                # Anything else (banner, announce, subscription-error
+                # lines) does not start a new event and is not a
+                # continuation of one - never put in the user's MIDI
+                # history.
+            returncode = proc.wait()
+        except (OSError, ValueError):
+            returncode = proc.poll()
+        finally:
+            if pending is not None:
+                self._put_event(pending)
+            if proc.stdout:
+                proc.stdout.close()
+        with self._lock:
+            if self._proc is proc:
+                self._proc = None
+                self._thread = None
+                self._port = None
+                self._status = "unavailable" if returncode not in (0, None) else "disconnected"
+
+    @staticmethod
+    def _interrupt(proc):
+        if proc.poll() is None:
+            proc.send_signal(signal.SIGINT)
+        try:
+            proc.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+    def _stop(self, status):
+        with self._lock:
+            proc, thread = self._proc, self._thread
+            # Detach first: the reader's exit must not overwrite the status
+            # selected by discovery (or by close()).
+            self._proc = self._thread = self._port = None
+            self._status = status
+        if proc is not None:
+            self._interrupt(proc)
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+
+    def ensure(self):
+        port, status = self._discover()
+        with self._lock:
+            if self._closed:
+                return self._status
+            proc, current_port = self._proc, self._port
+            running = proc is not None and proc.poll() is None
+            if running and port == current_port:
+                self._status = "connected"
+                return self._status
+        if running or proc is not None:
+            self._stop(status)
+        if port is None:
+            with self._lock:
+                self._status = status
+            return status
+        try:
+            proc = subprocess.Popen(
+                _with_pdeathsig(["stdbuf", "-oL", "aseqdump", "-p", port]),
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1)
+        except OSError:
+            with self._lock:
+                self._status = "unavailable"
+            return "unavailable"
+        thread = threading.Thread(target=self._read, args=(proc,), daemon=True,
+                                  name="phasex64-midi-monitor")
+        with self._lock:
+            if self._closed:
+                closed = True
+            else:
+                closed = False
+                self._proc, self._thread = proc, thread
+                self._port, self._status = port, "connected"
+        if closed:
+            self._interrupt(proc)
+            return self._status
+        thread.start()
+        return "connected"
+
+    def status(self):
+        with self._lock:
+            return self._status
+
+    def stop(self):
+        """Stop and reap the child but keep this monitor reusable."""
+        self._stop("closed")
+
+    def close(self):
+        with self._lock:
+            self._closed = True
+        self._stop("closed")
+
+
+class FakeMidiMonitor:
+    """Offline counterpart used by --demo/--fake-mixer and GUI tests."""
+    def __init__(self):
+        self.events = queue.Queue(maxsize=MIDI_EVENT_QUEUE_SIZE)
+        self.running = False
+        self.starts = 0
+        self.stops = 0
+
+    def ensure(self):
+        if not self.running:
+            self.running = True
+            self.starts += 1
+        return "demo"
+
+    def status(self):
+        return "demo" if self.running else "closed"
+
+    def stop(self):
+        if self.running:
+            self.running = False
+            self.stops += 1
+
+    def close(self):
+        self.stop()
+
+
+class Mixer:
+    def __init__(self, card):
+        self.card = card
+        self.available = set()
+        self.cancel = threading.Event()
+        self._monitor_lock = threading.Lock()
+        self._monitor_stop = threading.Event()
+        self._monitor_proc = None
+        self._monitor_thread = None
+        self.midi_monitor = MidiMonitor()
+
+    def contents(self):
+        if self.card is None:
+            self.available = set()
+            return {}
+        # Never use `contents`: it would consume reset-on-read peak controls
+        # during slow status refreshes, even when the window is hidden.
+        out = self._run(["controls"])
+        self.available = set(re.findall(r"name='([^']*)'", out))
+        return self._read_names(name for name in STATE_NAMES if name in self.available)
+
+    def _run(self, arguments, input_text=None):
+        try:
+            result = subprocess.run(["amixer", "-c", str(self.card)] + arguments,
+                                    input=input_text, capture_output=True, text=True,
+                                    timeout=2.0)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(_("ALSA control access unavailable")) from exc
+        if result.returncode:
+            raise RuntimeError(result.stderr.strip() or _("ALSA control request failed"))
+        return result.stdout
+
+    def _read_names(self, names):
+        # amixer --stdin implements writes, not cget. Read each named element
+        # explicitly; discovery/status never reads or resets any peak element.
+        values = {}
+        for name in names:
+            if self.cancel.is_set():
+                break
+            values.update(parse_values(self._run(["cget", "name=" + name])))
+        return values
+
+    def peaks(self, visible=None):
+        names = [name for name in PEAK_NAMES if name in self.available]
+        peaks = {}
+        for name in names:
+            if self.cancel.is_set() or (visible is not None and not visible.is_set()):
+                break
+            peaks[name] = parse_peak(self._read_names([name]).get(name))
+        return peaks
+
+    def set(self, name, value):
+        if name not in STATE_NAMES or name not in self.available:
+            raise ValueError(_("Control unavailable: {name}").format(name=name))
+        self._run(["-q", "cset", "name=" + name, str(value)])
+
+    def rate(self):
+        path = "/proc/asound/card%s/pcm0p/sub0/hw_params" % self.card
+        for p in (path, path.replace("pcm0p", "pcm0c")):
+            try:
+                with open(p) as f:
+                    m = re.search(r"rate:\s*(\d+)", f.read())
+                    if m:
+                        return int(m.group(1))
+            except OSError:
+                pass
+        return None
+
+    def stream_active(self):
+        states = []
+        for direction in ("p", "c"):
+            try:
+                text = Path(f"/proc/asound/card{self.card}/pcm0{direction}/sub0/status").read_text()
+            except OSError:
+                continue
+            if text.strip() == "closed":
+                states.append(False)
+            else:
+                match = re.search(r"state:\s*(\w+)", text)
+                if match:
+                    states.append(match.group(1) in ("RUNNING", "DRAINING"))
+        return any(states) if states else None
+
+    def midi_counters(self):
+        """Return aggregate (Rx, Tx) rawmidi byte counters for this card."""
+        if self.card is None:
+            return None, None
+        rx_total = tx_total = 0
+        rx_found = tx_found = False
+        try:
+            paths = sorted(Path(PROC_ASOUND, f"card{self.card}").glob("midi[0-9]*"))
+        except OSError:
+            return None, None
+        for path in paths:
+            try:
+                rx, tx = parse_midi_counters(path.read_text(encoding="ascii"))
+            except (OSError, UnicodeDecodeError):
+                continue
+            if rx is not None:
+                rx_total += rx
+                rx_found = True
+            if tx is not None:
+                tx_total += tx
+                tx_found = True
+        return rx_total if rx_found else None, tx_total if tx_found else None
+
+    def midi_available(self):
+        """True iff the PHASE rawmidi device is registered (ALSA card
+        loaded, its MIDI device present under /proc/asound) - independent
+        of whether anything has ever opened it, and *not* the monitor
+        window's own aseqdump subprocess state (that's a separate, much
+        rarer action - see MidiMonitor.status() for that). Checking the
+        rawmidi proc entry rather than the ALSA-seq port (`aseqdump -l`)
+        here specifically: this runs every ~1s on the ordinary state
+        poll, and a plain /proc read is free at that cadence where
+        spawning a subprocess every second would not be - the seq port's
+        own presence is still checked thoroughly, just only when the
+        monitor window is actually opened, a deliberate, infrequent
+        action rather than this continuous background poll.
+        """
+        if self.card is None:
+            return None
+        try:
+            return bool(list(Path(PROC_ASOUND, f"card{self.card}").glob("midi[0-9]*")))
+        except OSError:
+            return None
+
+    def start_change_monitor(self, on_change):
+        """Run `alsactl monitor <card>` in the background and call
+        on_change() (from a worker thread) whenever it prints a line, so
+        the panel follows changes made elsewhere (amixer, alsamixer, the
+        Windows-style skin in another window). Any line is treated as
+        "something changed, go re-read everything" - we don't parse which
+        control, refresh() already does a full re-read. Best effort: if
+        alsactl isn't available or exits, the caller's periodic poll is
+        the fallback, so failures here are silently ignored.
+        """
+        self.stop_change_monitor()
+        self._monitor_stop.clear()
+        try:
+            proc = subprocess.Popen(
+                _with_pdeathsig(["alsactl", "monitor", "hw:%s" % self.card]),
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        except OSError:
+            return None
+
+        def run():
+            try:
+                for _line in proc.stdout:
+                    if self._monitor_stop.is_set():
+                        break
+                    on_change()
+            finally:
+                # If the callback failed, do not leave the child blocked in
+                # alsactl after its only reader disappeared.
+                if proc.poll() is None:
+                    proc.terminate()
+                try:
+                    proc.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                if proc.stdout:
+                    proc.stdout.close()
+                with self._monitor_lock:
+                    if self._monitor_proc is proc:
+                        self._monitor_proc = None
+                        self._monitor_thread = None
+
+        thread = threading.Thread(target=run, daemon=True,
+                                  name="phasex64-alsactl-monitor")
+        with self._monitor_lock:
+            self._monitor_proc = proc
+            self._monitor_thread = thread
+        thread.start()
+        return thread
+
+    def stop_change_monitor(self):
+        """Terminate and reap only the monitor child started by this mixer."""
+        self._monitor_stop.set()
+        with self._monitor_lock:
+            proc = self._monitor_proc
+            thread = self._monitor_thread
+        if proc is not None:
+            if proc.poll() is None:
+                proc.terminate()
+            try:
+                proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+        with self._monitor_lock:
+            if self._monitor_proc is proc:
+                self._monitor_proc = None
+            if self._monitor_thread is thread:
+                self._monitor_thread = None
+
+    def ensure_change_monitor(self, on_change):
+        """Keep monitoring the currently enumerated PHASE X64 card.
+
+        A driver/device reload can end alsactl and can assign a different card
+        number. The panel's one-second refresh calls this method, which leaves
+        a healthy child alone and otherwise restarts one for the new card.
+        """
+        card = find_card()
+        with self._monitor_lock:
+            proc = self._monitor_proc
+            thread = self._monitor_thread
+        running = proc is not None and proc.poll() is None
+        if card is None:
+            if running:
+                self.stop_change_monitor()
+            self.card = None
+            self.available = set()
+            return None
+        if running and card == self.card:
+            return thread
+        self.card = card
+        self.available = set()
+        return self.start_change_monitor(on_change)
+
+
+class FakeMixer:
+    """In-memory mixer for testing the panel without hardware or a loaded
+    driver - mirrors the ALSA control set and the mono-direct interlock
+    closely enough to exercise the panel's click()/refresh() logic.
+    `phasex64-panel --fake-mixer [--plain]`.
+    """
+
+    def __init__(self, demo=False):
+        self.values = {
+            "In 1/2 Capture Source": "0",
+            "In 3/4 Capture Source": "1",
+            "Direct 1/2 Playback Switch": "off",
+            "Direct 1/2 Mono Playback Switch": "off",
+            "PCM 1/2 Playback Switch": "on",
+            "PCM 1/2 Mono Playback Switch": "off",
+            "Direct 3/4 Playback Switch": "off",
+            "Sound Module 3/4 Playback Switch": "off",
+            "PCM 3/4 Playback Switch": "on",
+            "PCM 3/4 Mono Playback Switch": "off",
+            CLOCK: "0",
+            LOCK: "off",
+            "Digital Input Rate": "48000",
+        }
+        self.values.update({name: "on" for name in RIAA_NAMES})
+        self._rate = 48000
+        self.card = "fake"
+        self.on_change = None
+        self.demo = demo
+        self.signal = False
+        self.meters_present = demo
+        self.available = set(self.values) | (set(PEAK_NAMES) if demo else set())
+        self.midi_rx = self.midi_tx = 0
+        self.midi_monitor = FakeMidiMonitor()
+        if demo:
+            self.values["In 1/2 Capture Source"] = "1"
+
+    def contents(self):
+        return dict(self.values)
+
+    def set(self, name, value):
+        if name not in self.values:
+            return
+        self.values[name] = value
+        self._apply_mono_interlock()
+        if self.on_change:
+            self.on_change()
+
+    def _apply_mono_interlock(self):
+        """Same rule as px_switch_put()/px_adc_source_put(): mono-direct
+        needs the mic input and direct monitoring."""
+        mic = self.values["In 1/2 Capture Source"] == "0"
+        direct = self.values["Direct 1/2 Playback Switch"] == "on"
+        if self.values["Direct 1/2 Mono Playback Switch"] == "on" and not (mic and direct):
+            self.values["Direct 1/2 Mono Playback Switch"] = "off"
+
+    def rate(self):
+        return self._rate
+
+    def stream_active(self):
+        return self.signal
+
+    def midi_counters(self):
+        return self.midi_rx, self.midi_tx
+
+    def midi_available(self):
+        return True
+
+    def peaks(self, visible=None):
+        if not self.meters_present:
+            return {}
+        t = time.monotonic()
+        return {name: tuple(int(PEAK_MAX * 10 ** ((-13 + 9 * math.sin(t * 2.8 + i + ch * .4)) / 20))
+                            if self.signal else 0 for ch in range(2))
+                for i, name in enumerate(PEAK_NAMES)}
+
+    def start_change_monitor(self, on_change):
+        # No external process to watch for a fake mixer; external test
+        # code can drive changes via .set() directly, which already
+        # calls on_change() synchronously above.
+        self.on_change = on_change
+        return None
+
+    def stop_change_monitor(self):
+        self.on_change = None
+
+    def ensure_change_monitor(self, on_change):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# skin
+
+
+BUILTIN_PRESET_IDS = ("vinyl", "monitor")
+
+
+def builtin_preset_label(preset_id):
+    """Translated display name for a built-in preset - never the lookup
+    key. See the Presets/Panel preset-selection code: the combobox shows
+    this, but every load()/save()/is-this-a-builtin check uses the stable
+    id (BUILTIN_PRESET_IDS) instead, so a locale change never breaks a
+    saved reference to a built-in preset."""
+    return {"vinyl": _("Record vinyl"), "monitor": _("Monitor")}[preset_id]
+
+
+def builtin_presets():
+    """Keyed by stable internal id (BUILTIN_PRESET_IDS), never translated -
+    translate only the displayed label (builtin_preset_label())."""
+    vinyl = {name: False for name in PRESET_NAMES}
+    vinyl.update({"In 1/2 Capture Source": 1, "In 3/4 Capture Source": 1,
+                  "PCM 1/2 Playback Switch": True, "PCM 3/4 Playback Switch": True,
+                  RIAA_NAMES[0]: True, RIAA_NAMES[1]: True})
+    monitor = dict(vinyl)
+    monitor["Direct 1/2 Playback Switch"] = True
+    return {"vinyl": vinyl, "monitor": monitor}
+
+
+def validate_preset(controls):
+    if not isinstance(controls, dict) or set(controls) != set(PRESET_NAMES):
+        raise ValueError(_("Preset must contain exactly the codec and RIAA controls"))
+    for name, value in controls.items():
+        if name in ADC_SOURCE_ITEMS:
+            if type(value) is not int or not 0 <= value < len(ADC_SOURCE_ITEMS[name]):
+                raise ValueError(_("Invalid source: {name}").format(name=name))
+        elif type(value) is not bool:
+            raise ValueError(_("Expected an on/off value: {name}").format(name=name))
+    if controls["Direct 1/2 Mono Playback Switch"] and (
+            controls["In 1/2 Capture Source"] != 0 or not controls["Direct 1/2 Playback Switch"]):
+        raise ValueError(_("Direct mono 1/2 requires Mic/HiZ/Line and Direct on"))
+    return dict(controls)
+
+
+def preset_from_values(values):
+    controls = {}
+    for name in PRESET_NAMES:
+        if name not in values:
+            raise ValueError(_("Cannot save: control unavailable: {name}").format(name=name))
+        if name in ADC_SOURCE_ITEMS:
+            controls[name] = int(values[name])
+        elif values[name] in ("on", "off"):
+            controls[name] = values[name] == "on"
+        else:
+            raise ValueError(_("Invalid control value: {name}").format(name=name))
+    return validate_preset(controls)
+
+
+def preset_writes(controls):
+    controls = validate_preset(controls)  # validate the WHOLE file before I/O
+    mono = "Direct 1/2 Mono Playback Switch"
+    # Disable the interlocked bit first, then sources/routes, then enable it last.
+    writes = [(mono, "off")]
+    for name in PRESET_NAMES:
+        if name != mono:
+            value = controls[name]
+            writes.append((name, str(value) if name in ADC_SOURCE_ITEMS else "on" if value else "off"))
+    writes.append((mono, "on" if controls[mono] else "off"))
+    return writes
+
+
+class Presets:
+    """Built-in presets are addressed by stable id (BUILTIN_PRESET_IDS);
+    user presets by their own filesystem-safe name, same as before. The
+    Panel is responsible for mapping the combobox's displayed (and
+    translated, for built-ins) text back to one of these before calling
+    load()/save() - see Panel.preset_entries()/load_preset()/save_preset().
+    """
+
+    def __init__(self, directory=None):
+        self.directory = Path(directory) if directory else Path(
+            os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))) / APP / "presets"
+
+    def builtin_ids(self):
+        return list(BUILTIN_PRESET_IDS)
+
+    def custom_names(self):
+        builtin = set(builtin_presets())
+        return sorted(p.stem for p in self.directory.glob("*.json") if p.stem not in builtin)
+
+    def path(self, name):
+        if not name or len(name) > 80 or any(not (c.isalnum() or c in " _-") for c in name):
+            raise ValueError(_("Use letters, numbers, spaces, - or _ in a preset name"))
+        return self.directory / (name + ".json")
+
+    def load(self, preset_id):
+        if preset_id in builtin_presets():
+            return builtin_presets()[preset_id]
+        with self.path(preset_id).open(encoding="utf-8") as stream:
+            text = stream.read(65537)
+        if len(text) > 65536:
+            raise ValueError(_("Preset is too large"))
+        data = json.loads(text)
+        if not isinstance(data, dict) or type(data.get("schema")) is not int or data["schema"] != 1:
+            raise ValueError(_("Unsupported preset schema"))
+        return validate_preset(data.get("controls"))
+
+    def save(self, name, controls):
+        controls = validate_preset(controls)
+        path = self.path(name)
+        if name in builtin_presets():
+            raise ValueError(_("Choose a different name; built-in examples are read-only"))
+        self.directory.mkdir(parents=True, exist_ok=True)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.directory,
+                                             prefix=".preset-", delete=False) as stream:
+                temporary = Path(stream.name)
+                json.dump({"schema": 1, "name": name, "controls": controls}, stream,
+                          ensure_ascii=False, indent=2)
+                stream.write("\n")
+            os.replace(temporary, path)
+        finally:
+            if temporary is not None and temporary.exists():
+                temporary.unlink()
+
+
+class PanelIO:
+    """Single owner of ALSA requests. Never touches Tk from a worker thread."""
+    def __init__(self, mixer):
+        self.mixer = mixer
+        self.requests, self.results = queue.Queue(), queue.Queue()
+        self.stop = threading.Event()
+        self.visible = threading.Event()
+        self.changed = threading.Event()
+        self.mixer.cancel = self.stop
+        self.last_peak = 0.0
+        self.thread = threading.Thread(target=self.run, daemon=True, name="phasex64-panel-io")
+        self.thread.start()
+
+    def submit(self, kind, payload=None):
+        self.requests.put((kind, payload))
+
+    def run(self):
+        try:
+            while not self.stop.is_set():
+                try:
+                    kind, payload = self.requests.get(timeout=.1)
+                except queue.Empty:
+                    continue
+                if self.stop.is_set():
+                    break
+                try:
+                    if kind == "state":
+                        # This thread (PanelIO's own worker) is the one
+                        # and only caller - required for the alsactl
+                        # child's PDEATHSIG (_with_pdeathsig's own
+                        # comment) to fire against this thread's actual
+                        # lifetime, which matches the panel's.
+                        self.mixer.ensure_change_monitor(self.changed.set)
+                        # Opening the ALSA-seq monitor is an explicit UI
+                        # action, never a side effect of this poll. Neither
+                        # this nor the rawmidi counters below (moved to the
+                        # "peaks" branch - see its own comment) use PCM
+                        # state as a proxy for MIDI availability/activity.
+                        # midi_available() (the rawmidi *device*, not the
+                        # monitor window's own aseqdump subprocess state -
+                        # see that method's own comment) feeds the status
+                        # bar; the monitor window gets its own connection
+                        # state separately, straight from
+                        # self.mixer.midi_monitor.status() in tick(), not
+                        # through this tuple at all.
+                        values = self.mixer.contents()
+                        result = (values, self.mixer.rate(), self.mixer.stream_active(),
+                                  self.mixer.card, self.mixer.midi_available())
+                    elif kind == "midi_start":
+                        # Same requirement as the "state" branch's own
+                        # comment above, for aseqdump's PDEATHSIG - this
+                        # worker thread is the only caller of ensure().
+                        result = self.mixer.midi_monitor.ensure()
+                    elif kind == "midi_stop":
+                        self.mixer.midi_monitor.stop()
+                        result = self.mixer.midi_monitor.status()
+                    elif kind == "peaks":
+                        # No catch-up bursts after a slow state read or write.
+                        if self.stop.wait(max(0, .05 - (time.monotonic() - self.last_peak))):
+                            break
+                        self.last_peak = time.monotonic()
+                        peaks = self.mixer.peaks(self.visible) if self.visible.is_set() else {}
+                        # Addendum (2026-10-19): rawmidi Rx/Tx byte counters
+                        # ride this fast ~50ms poll, not the slow ~1s
+                        # "state" one - a cheap /proc read, trivial next to
+                        # the per-peak-name amixer subprocess calls peaks()
+                        # already does at this same cadence. LED hold
+                        # (MIDI_LED_HOLD_SECONDS) needs sub-second
+                        # resolution to look like a steady glow under
+                        # continuous traffic (e.g. MIDI clock) rather than
+                        # a ~1Hz flicker - sampling once a second like the
+                        # rest of "state" would defeat that regardless of
+                        # the exact hold value.
+                        result = (peaks, self.mixer.midi_counters())
+                    elif kind == "write":
+                        for name, value in payload:
+                            if self.stop.is_set():
+                                break
+                            self.mixer.set(name, value)
+                        result = None
+                    else:
+                        continue
+                    self.results.put((kind, result, None))
+                except (RuntimeError, ValueError, OSError) as exc:
+                    self.results.put((kind, None, str(exc)))
+        finally:
+            self.mixer.midi_monitor.close()
+            self.mixer.stop_change_monitor()
+
+    def close(self):
+        self.visible.clear()
+        self.stop.set()
+        # One bounded request may still be in flight; queued writes are discarded.
+        self.thread.join(timeout=5.0)
+
+
+class Tooltip:
+    """A themed hover tooltip - Tk has no built-in one. Shows after a short
+    delay, hides on leave or click, follows the dark theme, wraps around
+    40 characters. `text` may be a 0-argument callable for dynamic content
+    (e.g. the Direct Mono tooltip, which explains *why* it's disabled right
+    now, not just what it does in general).
+
+    One Tooltip per widget; the widget keeps a reference to it
+    (`widget._tooltip`) so tests can verify coverage without duplicating
+    the widget inventory.
+    """
+    DELAY_MS = 500
+    WRAP = 300  # pixels; ~40 characters at this font size
+
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.after_id = None
+        self.window = None
+        widget._tooltip = self
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<Button-1>", self._hide, add="+")
+        widget.bind("<Destroy>", self._hide, add="+")
+
+    def _schedule(self, event=None):
+        self._cancel_timer()
+        self.after_id = self.widget.after(self.DELAY_MS, self._show)
+
+    def _cancel_timer(self):
+        if self.after_id is not None:
+            try:
+                self.widget.after_cancel(self.after_id)
+            except tk.TclError:
+                pass
+            self.after_id = None
+
+    def _show(self):
+        self.after_id = None
+        if self.window is not None:
+            return
+        text = self.text() if callable(self.text) else self.text
+        if not text:
+            return
+        try:
+            x = self.widget.winfo_rootx() + 12
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        except tk.TclError:
+            return
+        self.window = tk.Toplevel(self.widget)
+        self.window.wm_overrideredirect(True)
+        try:
+            self.window.wm_attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        self.window.wm_geometry(f"+{x}+{y}")
+        self.window.configure(bg=EDGE)
+        tk.Label(self.window, text=text, bg=TOOLTIP_BG, fg=TEXT, wraplength=self.WRAP,
+                 justify="left", padx=8, pady=5, font=("DejaVu Sans", 8)).pack(
+                     padx=1, pady=1)
+
+    def _hide(self, event=None):
+        self._cancel_timer()
+        if self.window is not None:
+            try:
+                self.window.destroy()
+            except tk.TclError:
+                pass
+            self.window = None
+
+
+def bind_wraplength(label, container, margin=24, minimum=80):
+    """Keep `label`'s wraplength tracking `container`'s current width, so
+    the text can never clip regardless of window/column size - a static
+    guess would still clip at some width."""
+    def update(event=None):
+        width = container.winfo_width()
+        if width > 1:
+            label.configure(wraplength=max(minimum, width - margin))
+    container.bind("<Configure>", update, add="+")
+    label.after_idle(update)
+
+
+class PeakMeter(tk.Canvas):
+    """Stereo sample-peak display (dBFS), not an analog RMS/VU calibration."""
+    HOLD_SECONDS = 3.0
+
+    def __init__(self, parent):
+        super().__init__(parent, width=240, height=118, bg=CARD, highlightthickness=0)
+        self.levels = [-60.0, -60.0]
+        self.hold_db = None  # None <=> "-inf dBFS" (silence)
+        self.hold_clip = False
+        self.hold_ready = False
+        self.last = time.monotonic()
+        self.tag_bind("readout", "<Button-1>", self._reset_hold)
+        self.draw(None)
+
+    def _reset_hold(self, event=None):
+        # Real hardware, 2026-10-16: the readout tracked the raw per-poll
+        # peak, which on sustained/compressed music can sit on the same
+        # ceiling for minutes and read as a stuck display rather than a
+        # meter. Make the hold explicit (HOLD_SECONDS) instead, with a
+        # click on the number forcing it to re-latch to the live peak
+        # immediately rather than waiting out the hold window.
+        self.hold_ready = False
+
+    def draw(self, pair):
+        now = time.monotonic()
+        elapsed, self.last = now - self.last, now
+        self.delete("all")
+        enabled = pair is not None
+        self.create_text(6, 10, anchor="w", text=_("L / R   ·   SAMPLE PEAK"),
+                         fill=DIM_TEXT if enabled else DIM, font=("DejaVu Sans", 8))
+        for channel, y in enumerate((32, 53)):
+            target = peak_db(pair[channel]) if enabled else -60.0
+            self.levels[channel] = max(target, self.levels[channel] - 36 * elapsed) if enabled else -60.0
+            self.create_text(6, y + 5, text="LR"[channel], anchor="w", fill=DIM_TEXT, font=("DejaVu Sans", 8))
+            for segment in range(30):
+                threshold = -60 + (segment + 1) * 2
+                colour = RED if threshold > -4 else ACCENT if threshold > -12 else CYAN
+                lit = enabled and self.levels[channel] >= threshold
+                self.create_rectangle(22 + segment * 7, y, 27 + segment * 7, y + 10,
+                                      fill=colour if lit else "#303a41", outline="")
+        if enabled:
+            maximum = max(pair)
+            current_db = None if not maximum else 20 * math.log10(maximum / PEAK_MAX)
+            current_key = current_db if current_db is not None else float("-inf")
+            held_key = self.hold_db if self.hold_db is not None else float("-inf")
+            # Explicit peak hold, not a raw per-poll reading (real
+            # hardware, 2026-10-16): sustained/compressed music can hit
+            # the same ceiling poll after poll, which read as a stuck
+            # display rather than a meter. Hold the peak for HOLD_SECONDS
+            # (jumping up immediately on a new, higher peak), then
+            # re-latch to whatever is live; click the number (see
+            # _reset_hold) to re-latch early.
+            if not self.hold_ready or current_key >= held_key or now - self.hold_started >= self.HOLD_SECONDS:
+                self.hold_db, self.hold_clip, self.hold_started, self.hold_ready = (
+                    current_db, maximum == PEAK_MAX, now, True)
+            label = _("−∞ dBFS") if self.hold_db is None else _("{value:.1f} dBFS").format(value=self.hold_db)
+            # Own rows, not shared with the scale legend below (real
+            # hardware, 2026-10-16): a wide readout like "−64.9 dBFS"
+            # (anchor "e") used to run left into the tail of "−60 −36
+            # −12" (anchor "w") when both sat on the same y, producing
+            # "−12-64.9 dBFS". Separate rows make that impossible
+            # regardless of how wide either string is.
+            self.create_text(22, 74, text="−60     −36     −12", anchor="w", fill=DIM_TEXT, font=("DejaVu Sans", 8))
+            self.create_text(232, 96, text=label, anchor="e", fill=RED if self.hold_clip else TEXT,
+                             font=("DejaVu Sans Mono", 9), tags="readout")
+        else:
+            self.hold_ready = False
+            self.create_text(120, 92, text=_("needs driver ≥ 0.1.11.5"), fill=DIM_TEXT,
+                             font=("DejaVu Sans", 9), width=220, justify="center")
+
+
+def parse_script(path):
+    """Parse the [MAIN] section of the skin's script.txt."""
+    buttons, section, info = {}, None, {}
+    with open(path, encoding="latin-1") as f:
+        for raw in f:
+            line = raw.split("#", 1)[0].strip()
+            if line.startswith("[") and line.endswith("]"):
+                section = line[1:-1]
+                continue
+            if section != "MAIN" or "=" not in line:
+                continue
+            key, val = (s.strip() for s in line.split("=", 1))
+            m = re.match(r"(xBTN|yBTN|BPIC|TYPE|DISA)(\d+)$", key)
+            if m:
+                buttons.setdefault(int(m.group(2)), {})[m.group(1)] = val
+            else:
+                info[key] = val
+    return buttons, info
+
+
+def parse_lang(path):
+    texts = {}
+    try:
+        with open(path, encoding="latin-1") as f:
+            for line in f:
+                m = re.match(r"TXT(\d+)=(.*)", line.strip())
+                if m:
+                    texts[int(m.group(1))] = m.group(2).strip()
+    except OSError:
+        pass
+    return texts
+
+
+def find_skin(explicit=None):
+    for d in ([explicit] if explicit else SKIN_DIRS):
+        if d and os.path.isfile(os.path.join(d, "script.txt")):
+            return d
+    return None
+
+
+def import_skin(src):
+    data = src
+    for cand in (src, os.path.join(src, "data")):
+        if os.path.isfile(os.path.join(cand, "script.txt")):
+            data = cand
+            break
+    else:
+        sys.exit("no script.txt found in %s or %s/data" % (src, src))
+    dst = SKIN_DIRS[0]
+    os.makedirs(dst, exist_ok=True)
+    for name in os.listdir(data):
+        if name.lower().endswith((".png", ".txt")):
+            shutil.copy2(os.path.join(data, name), dst)
+    print("skin imported to", dst)
+
+
+# ---------------------------------------------------------------------------
+# UI
+
+# Fixed row budgets shared by every column's card, so section boundaries
+# (source/route list, RIAA row, description, meter) line up across all 4
+# columns regardless of how many items/lines each column's content has -
+# see Panel.build_plain(). Generous on purpose: a little empty space below
+# a short column beats any clipping or misalignment.
+ITEMS_ROW_MINSIZE = 232   # up to 6 radio/switch rows
+EXTRA_ROW_MINSIZE = 56    # one more switch row (RIAA on IN columns)
+DESC_ROW_MINSIZE = 92     # 2-4 wrapped lines of description/hint text
+# Addendum (2026-10-19): a *uniform* reserved row for the one note that's
+# genuinely column-specific (CAPTURE_56_TEXT, Out 1/2 only) - reserved
+# identically on every column's own grid (each card is a separate Frame
+# with its own independent grid, so a minsize set on only one of them
+# would leave the others shorter and misalign the meter row below; fix:
+# reserve the same minsize on all four, populate the actual label on only
+# one). Prefer this over a magic per-column pixel offset.
+NOTE_ROW_MINSIZE = 34     # 1-2 wrapped lines
+# Addendum (2026-10-19): messagebox.showinfo()'s dialog auto-sizes to its
+# message body, which was narrower than some window managers need to
+# render "About PHASE X64" in the title bar without clipping it - a
+# custom Toplevel (same dark-theme pattern as Tooltip's own, elsewhere in
+# this file) gives explicit control over width instead of hoping the
+# native dialog happens to come out wide enough.
+ABOUT_MIN_WIDTH = 360
+
+
+class Panel:
+    def __init__(self, root, mixer, skin):
+        self.root = root
+        self.mixer = mixer
+        self.state = {}
+        self.widgets = {}
+        self.values = {}
+        self.control_widgets = {}
+        self.enum_vars = {}
+        self.switch_vars = {}
+        self.meters = {}
+        self.loopback_labels = {}
+        self.midi_leds = {}
+        self.midi_last_counters = [None, None]
+        self.midi_led_until = [0.0, 0.0]
+        self.midi_monitor_lines = []
+        self.midi_monitor_status = "closed"
+        self.midi_window = None
+        self.midi_monitor_widget = None
+        self.midi_monitor_state = None
+        self.midi_monitor_closing = False
+        self.pending_midi_monitor = False
+        self.next_midi_monitor = 0.0
+        self.midi_stream_hint = None
+        self.midi_show_clock_var = None  # tk.BooleanVar, created with the window
+        self.midi_show_system_var = None  # tk.BooleanVar, created with the window
+        # Addendum (2026-10-19): last known PCM stream state, for the
+        # monitor window's own hint only - see analysis/NOTES.md,
+        # "Hardware device-gate result": the ALSA rawmidi/seq software
+        # path genuinely doesn't depend on PCM state (LEDs/button/window
+        # all stay independent of this, by design - never gate those on
+        # it), but real MIDI bytes only flow while a stream is active,
+        # a repeatedly hardware-confirmed fact, not a software one this
+        # driver enforces or could remove. None until the first "state"
+        # poll result arrives.
+        self.pcm_active = None
+        self.presets = Presets()
+        self.preset_ids = []
+        self.closed = False
+        self.refresh_job = None
+        self.pending_state = self.pending_peaks = self.writing = False
+        self.next_state = self.next_peak = 0.0
+        self.obscured = False
+        # Read once at startup, not per-write: the loaded driver's version
+        # doesn't change while the panel is running (a reload mid-session
+        # is a pathological edge case, not worth a live re-check for).
+        self.live_apply_capable = version_at_least(read_driver_version(), LIVE_APPLY_MIN_VERSION)
+        self.card_status = _("Connecting…")
+        root.title(_("PHASE X64 · Studio control"))
+        root.configure(bg=BG)
+        root.option_add("*Font", "{DejaVu Sans} 10")
+        root.protocol("WM_DELETE_WINDOW", self.close)
+        if skin:
+            root.resizable(False, False)
+            self.build_skin(skin)
+            extras = tk.Frame(root, bg=BG, padx=16, pady=12)
+            extras.pack(fill="x")
+            for pair, name in enumerate(RIAA_NAMES):
+                self.add_switch(extras, name, _("Phono RIAA {pair}").format(pair=("1/2", "3/4")[pair]),
+                                self.riaa_tooltip(pair)).pack(side="left", padx=8)
+            meters = tk.Frame(root, bg=BG)
+            meters.pack(fill="x")
+            for name in PEAK_NAMES:
+                frame = tk.LabelFrame(meters, text=name, bg=CARD, fg=DIM_TEXT)
+                frame.pack(side="left", padx=4)
+                self.meters[name] = PeakMeter(frame)
+                self.meters[name].pack()
+                if name == "Out 1/2 Peak":
+                    # Addendum (2026-10-19): same capture-5/6 note as
+                    # build_plain's Out 1/2 card - no skin-image
+                    # equivalent exists for this, so it's added here as a
+                    # plain Tk label under the meter rather than drawn
+                    # into the skin's own canvas.
+                    cap56_label = tk.Label(frame, text=CAPTURE_56_TEXT, bg=CARD, fg=DIM_TEXT,
+                                           font=("DejaVu Sans", 7), wraplength=140, justify="center")
+                    cap56_label.pack()
+                    Tooltip(cap56_label, CAPTURE_56_TOOLTIP)
+            loopback_row = tk.Frame(root, bg=BG, padx=16)
+            loopback_row.pack(fill="x", pady=(4, 0))
+            for name in ("In 1/2 Capture Source", "In 3/4 Capture Source"):
+                # Addendum (2026-10-19): same live loopback-source
+                # indicator as build_plain's In columns - updated in
+                # render_controls()'s ENUM_BUTTONS loop, not here.
+                label = tk.Label(loopback_row, text="", justify="left", bg=BG,
+                                 fg=ACCENT, font=("DejaVu Sans", 8), anchor="w")
+                label.pack(anchor="w", fill="x")
+                Tooltip(label, self.loopback_tooltip(name))
+                self.loopback_labels[name] = label
+            self.build_footer()
+        else:
+            self.build_plain()
+            root.update_idletasks()
+            root.minsize(root.winfo_reqwidth(), root.winfo_reqheight())
+            root.resizable(True, True)
+        self.io = PanelIO(mixer)
+        root.bind("<Visibility>", self.visibility, add="+")
+        root.bind("<Unmap>", self.visibility, add="+")
+        root.bind("<Map>", self.visibility, add="+")
+        self.tick()
+
+    def _on_external_change(self):
+        # A thread-safe flag, not a Tk call from alsactl's reader thread.
+        if not self.closed:
+            self.io.changed.set()
+
+    def close(self):
+        """Stop the owned monitor before destroying the Tk application."""
+        if self.closed:
+            return
+        self.closed = True
+        if self.refresh_job is not None:
+            try:
+                self.root.after_cancel(self.refresh_job)
+            except tk.TclError:
+                pass
+            self.refresh_job = None
+        if hasattr(self, "io"):
+            self.io.close()
+        else:
+            self.mixer.stop_change_monitor()
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
+
+    # -- skinned ----------------------------------------------------------
+
+    def load_image(self, skin, name):
+        files = {f.lower(): f for f in os.listdir(skin)}
+        real = files.get(name.lower())
+        return tk.PhotoImage(file=os.path.join(skin, real)) if real else None
+
+    def build_skin(self, skin):
+        buttons, info = parse_script(os.path.join(skin, "script.txt"))
+        self.texts = parse_lang(os.path.join(skin, "lang_en.txt")) or \
+            parse_lang(os.path.join(skin, "LANG_EN.TXT"))
+        bg = self.load_image(skin, info.get("BACKGROUND", "BG_Page_Main.png"))
+        if bg is None:
+            raise ValueError("Skin background image is missing")
+        self.canvas = tk.Canvas(self.root, width=bg.width(), height=bg.height(),
+                                highlightthickness=0, bd=0)
+        self.canvas.pack()
+        self.canvas.create_image(0, 0, image=bg, anchor="nw")
+        self.images = [bg]
+        tx, ty = int(info.get("TXTOUTX", 24)), int(info.get("TXTOUTY", 267))
+        tw = int(info.get("TXTOUTW", 652))
+        self.help = self.canvas.create_text(tx, ty + 8, anchor="w", width=tw,
+                                            fill="#d0d0d0",
+                                            font=("Sans", 8))
+        for num, b in buttons.items():
+            if "BPIC" not in b or "xBTN" not in b:
+                continue
+            x, y = int(b["xBTN"]), int(b["yBTN"])
+            if x >= 1000:
+                continue
+            if num not in ENUM_BUTTONS and num not in SWITCH_BUTTONS and \
+                    num not in RATE_BUTTONS and num not in (BTN_INFO, BTN_CLOSE):
+                continue    # latency buttons: buffer size is set by the audio app
+            sheet = self.load_image(skin, b["BPIC"])
+            if sheet is None:
+                continue
+            h = sheet.height() // 4
+            frames = []
+            for i in range(4):
+                fr = tk.PhotoImage(width=sheet.width(), height=h)
+                fr.tk.call(fr, "copy", sheet, "-from", 0, i * h,
+                           sheet.width(), (i + 1) * h, "-to", 0, 0)
+                frames.append(fr)
+            self.images += [sheet] + frames
+            item = self.canvas.create_image(x, y, image=frames[0], anchor="nw")
+            self.widgets[num] = (item, frames)
+            self.canvas.tag_bind(item, "<Button-1>",
+                                 lambda e, n=num: self.click(n))
+            self.canvas.tag_bind(item, "<Enter>",
+                                 lambda e, n=num: self.show_help(n))
+            self.canvas.tag_bind(item, "<Leave>",
+                                 lambda e: self.show_help(None))
+
+    def show_help(self, num):
+        if hasattr(self, "help"):
+            self.canvas.itemconfigure(self.help,
+                                      text=self.texts.get(num, "").replace("Sound Module", "DSP") if num else "")
+
+    def draw(self, num, on):
+        item, frames = self.widgets[num]
+        self.canvas.itemconfigure(item, image=frames[1 if on else 0])
+
+    # -- plain ------------------------------------------------------------
+
+    def riaa_tooltip(self, pair_index):
+        source = f"In {('1/2', '3/4')[pair_index]} Capture Source"
+
+        def tooltip():
+            base = _("Applies the RIAA equalisation curve in the driver (as on "
+                     "Windows). Only active when the source is Phono.")
+            phono = str(ADC_SOURCE_ITEMS[source].index("Phono"))
+            if self.values.get(source) != phono:
+                base += " " + _("(select Phono first)")
+            return base
+        return tooltip
+
+    def direct_mono_tooltip(self):
+        # Addendum (2026-10-20, hardware-confirmed): with source
+        # Mic-HiZ-Line, this sums Ch.1 (mic, L) and Ch.2 (Hi-Z/Line, R)
+        # so both are heard on both sides, instead of mic-left/Hi-Z-
+        # right as with Direct alone - see analysis/NOTES.md, "Front
+        # inputs: Mic / Hi-Z / Line".
+        base = _("Sums Ch.1 (mic) and Ch.2 (Hi-Z/Line) to both sides, instead of "
+                 "mic left / Hi-Z right.")
+        enabled = (self.values.get("In 1/2 Capture Source") == "0" and
+                   self.values.get("Direct 1/2 Playback Switch") == "on")
+        if not enabled:
+            base += " " + _("(needs Mic/HiZ/Line source and Direct on)")
+        return base
+
+    def loopback_tooltip(self, name):
+        # Addendum (2026-10-19): the feedback-loop warning (both
+        # indicators at once) gets its own, more specific tooltip text -
+        # same dynamic-callable pattern as riaa_tooltip/direct_mono_
+        # tooltip above, since which text applies depends on live state.
+        def tooltip():
+            return FEEDBACK_LOOP_TOOLTIP if feedback_loop_active(self.values) \
+                else LOOPBACK_STATUS_TOOLTIP[name]
+        return tooltip
+
+    def build_plain(self):
+        header = tk.Frame(self.root, bg=BG, padx=22, pady=20)
+        header.pack(fill="x")
+        tk.Label(header, text="PHASE", bg=BG, fg=TEXT, font=("DejaVu Sans", 24, "bold")).pack(side="left")
+        tk.Label(header, text=" / X64", bg=BG, fg=ACCENT, font=("DejaVu Sans", 24)).pack(side="left")
+        tk.Label(header, text=_("USB AUDIO  /  STUDIO CONTROL"), bg=BG, fg=DIM_TEXT,
+                 font=("DejaVu Sans", 9)).pack(side="left", padx=24)
+        about_btn = self.button(header, _("ABOUT"), self.about)
+        about_btn.pack(side="right")
+        Tooltip(about_btn, _("Panel and driver version, card status."))
+        if isinstance(self.mixer, FakeMixer):
+            self.demo_signal = tk.BooleanVar(value=self.mixer.signal)
+            demo_chk = tk.Checkbutton(header, text=_("DEMO SIGNAL"), variable=self.demo_signal,
+                           command=self.toggle_demo, bg=BG, fg=ACCENT, selectcolor=CARD,
+                           activebackground=BG, activeforeground=ACCENT)
+            demo_chk.pack(side="right", padx=14)
+            Tooltip(demo_chk, _("Simulate an audio signal for the peak meters (demo mode only)."))
+        body = tk.Frame(self.root, bg=BG, padx=16)
+        body.pack(fill="both", expand=True)
+        for column in range(4):
+            body.grid_columnconfigure(column, weight=1, uniform="card")
+        # (untranslated id matching PEAK_NAMES's "{In,Out} {pair} Peak"
+        # construction, translated display title) - keeping these
+        # separate is load-bearing: self.meters' dict key below must
+        # match the real ALSA control name (PEAK_NAMES), which is never
+        # translated, not the heading text, which is. Using `title` for
+        # both (the original bug) meant meter lookups silently broke in
+        # any locale where a column title translates to something other
+        # than its English source - e.g. Dutch's "Out 1/2" -> "Uit 1/2"
+        # made self.meters["Uit 1/2 Peak"] never match the real "Out 1/2
+        # Peak" results, while "In 1/2" (untranslated in nl.po, by
+        # coincidence) kept working and masked the bug - found on real
+        # hardware, 2026-10-16.
+        columns = (
+            ("In 1/2", _("In 1/2")), ("In 3/4", _("In 3/4")),
+            ("Out 1/2", _("Out 1/2")), ("Out 3/4", _("Out 3/4")),
+        )
+        for column, (slug, title) in enumerate(columns):
+            card = tk.Frame(body, bg=CARD, highlightbackground=EDGE, highlightthickness=1)
+            card.grid(row=0, column=column, padx=5, sticky="nsew")
+            card.grid_columnconfigure(0, weight=1)
+            stripe = tk.Frame(card, bg=ACCENT if column < 2 else CYAN, height=3)
+            stripe.grid(row=0, column=0, sticky="ew")
+            heading = tk.Frame(card, bg=CARD, padx=14, pady=14)
+            heading.grid(row=1, column=0, sticky="new")
+            tk.Label(heading, text=title.upper(), bg=CARD, fg=TEXT,
+                     font=("DejaVu Sans", 16, "bold")).pack(anchor="w")
+            tk.Label(heading, text=_("CAPTURE SOURCE") if column < 2 else _("OUTPUT ROUTING"),
+                     bg=CARD, fg=DIM_TEXT, font=("DejaVu Sans", 8)).pack(anchor="w", pady=(5, 0))
+
+            items_area = tk.Frame(card, bg=CARD, padx=14)
+            items_area.grid(row=2, column=0, sticky="new")
+            card.grid_rowconfigure(2, minsize=ITEMS_ROW_MINSIZE)
+            extra_area = tk.Frame(card, bg=CARD, padx=14)
+            extra_area.grid(row=3, column=0, sticky="new")
+            card.grid_rowconfigure(3, minsize=EXTRA_ROW_MINSIZE)
+            desc_area = tk.Frame(card, bg=CARD, padx=14)
+            desc_area.grid(row=4, column=0, sticky="new")
+            card.grid_rowconfigure(4, minsize=DESC_ROW_MINSIZE)
+            note_area = tk.Frame(card, bg=CARD, padx=14)
+            note_area.grid(row=5, column=0, sticky="new")
+            card.grid_rowconfigure(5, minsize=NOTE_ROW_MINSIZE)
+            meter_area = tk.Frame(card, bg=CARD)
+            meter_area.grid(row=6, column=0, pady=10)
+            tk.Frame(card, bg=CARD, height=10).grid(row=7, column=0)
+
+            if column < 2:
+                name = f"{('In 1/2 Capture Source', 'In 3/4 Capture Source')[column]}"
+                var = self.enum_vars[name] = tk.IntVar(value=-1)
+                for index, item in enumerate(ADC_SOURCE_ITEMS[name]):
+                    label = source_label(item)
+                    rb = tk.Radiobutton(items_area, text="○  " + label, anchor="w",
+                                        variable=var, value=index, indicatoron=False,
+                                        bg=CARD, fg=TEXT, selectcolor="#36482c",
+                                        activebackground=EDGE, activeforeground=ACCENT,
+                                        disabledforeground=DIM, relief="flat", bd=0,
+                                        padx=7, pady=5, highlightthickness=0,
+                                        command=lambda n=name, i=index: self.write([(n, str(i))]))
+                    rb.control_label = label
+                    rb.pack(fill="x", pady=2)
+                    self.control_widgets.setdefault(name, []).append(rb)
+                    tip = ITEM_TOOLTIPS.get(item)
+                    if tip:
+                        Tooltip(rb, tip)
+                riaa_switch = self.add_switch(extra_area, RIAA_NAMES[column], _("PHONO RIAA"),
+                                              self.riaa_tooltip(column))
+                riaa_switch.pack(fill="x")
+                # Addendum (2026-10-19): live "recording the other pair's
+                # output" indicator - desc_area is otherwise unused for
+                # these two columns (only the Out columns below use it),
+                # so it's the natural, already-laid-out place for this.
+                # Text set in render_controls() (empty when this pair
+                # isn't actually set to its Loopback item); updates on
+                # the same poll cycle as everything else, no new timer.
+                loopback_label = tk.Label(desc_area, text="", justify="left", bg=CARD,
+                                          fg=ACCENT, font=("DejaVu Sans", 8), anchor="w")
+                loopback_label.pack(anchor="w", fill="x")
+                bind_wraplength(loopback_label, card)
+                Tooltip(loopback_label, self.loopback_tooltip(name))
+                self.loopback_labels[name] = loopback_label
+            else:
+                pair = "1/2" if column == 2 else "3/4"
+                switch_specs = [
+                    (_("DIRECT"), f"Direct {pair} Playback Switch",
+                     _("Analog direct monitoring of the input, without latency. "
+                       "Not RIAA-equalised, so phono sounds thin.")),
+                    (_("PCM"), f"PCM {pair} Playback Switch",
+                     _("Playback from your software (e.g. your DAW) to this output.")),
+                    (_("PCM MONO"), f"PCM {pair} Mono Playback Switch",
+                     _("Sums left and right to mono.")),
+                ]
+                if column == 2:
+                    switch_specs.append((_("DIRECT MONO"), "Direct 1/2 Mono Playback Switch",
+                                         self.direct_mono_tooltip))
+                else:
+                    switch_specs.append((_("DSP"), "Sound Module 3/4 Playback Switch",
+                                         ITEM_TOOLTIPS["Sound Module"]))
+                for label, name, tooltip in switch_specs:
+                    self.add_switch(items_area, name, label, tooltip).pack(fill="x", pady=(0, 8))
+                desc_text = (_("Routes can be combined.\nMono follows its hardware interlock.")
+                            if column == 2 else
+                            _("Routes can be combined.\nDSP is the sound-module route."))
+                desc_label = tk.Label(desc_area, text=desc_text, justify="left", bg=CARD,
+                                      fg=DIM_TEXT, font=("DejaVu Sans", 8), anchor="w")
+                desc_label.pack(anchor="w", fill="x", pady=(0, 10))
+                bind_wraplength(desc_label, card)
+                peaks_label = tk.Label(desc_area, text=_("PCM peaks only · excludes Direct/DSP"),
+                                       bg=CARD, fg=DIM_TEXT, font=("DejaVu Sans", 8),
+                                       anchor="w", justify="left")
+                peaks_label.pack(anchor="w", fill="x")
+                bind_wraplength(peaks_label, card)
+                if column == 2:
+                    # Addendum (2026-10-19): capture 5/6 has no ALSA
+                    # control of its own (no mixer name, no peak meter) -
+                    # this is the only place in the panel that explains it
+                    # exists, placed on Out 1/2 specifically since that's
+                    # what 5/6 always reflects. Lives in note_area, not
+                    # desc_area - see NOTE_ROW_MINSIZE's own comment for
+                    # why (keeps all four meter rows aligned).
+                    cap56_label = tk.Label(note_area, text=CAPTURE_56_TEXT,
+                                           bg=CARD, fg=DIM_TEXT, font=("DejaVu Sans", 8),
+                                           anchor="w", justify="left")
+                    cap56_label.pack(anchor="w", fill="x")
+                    bind_wraplength(cap56_label, card)
+                    Tooltip(cap56_label, CAPTURE_56_TOOLTIP)
+            meter = self.meters[slug + " Peak"] = PeakMeter(meter_area)
+            meter.pack()
+            Tooltip(meter, _("Sample peak of the PCM signal. Needs driver ≥ 0.1.11.5.\n"
+                            "Readout: peak hold ~3 s, then live · click the number to reset."))
+        self.build_footer()
+
+    def button(self, parent, text, command):
+        return tk.Button(parent, text=text, command=command, bg=EDGE, fg=TEXT,
+                         activebackground="#48545e", activeforeground=ACCENT,
+                         disabledforeground=DIM, relief="flat", bd=0, padx=13, pady=7,
+                         highlightthickness=1, highlightbackground=EDGE)
+
+    def add_switch(self, parent, name, label, tooltip=None):
+        var = self.switch_vars[name] = tk.BooleanVar()
+        button = tk.Checkbutton(parent, text="■  " + label, variable=var, indicatoron=False,
+                                anchor="w", bg="#2a3239", fg=TEXT, selectcolor="#36482c",
+                                activebackground=EDGE, activeforeground=ACCENT,
+                                disabledforeground=DIM, relief="flat", bd=0,
+                                padx=10, pady=8, highlightthickness=0,
+                                command=lambda: self.write([(name, "on" if var.get() else "off")]))
+        button.control_label = label
+        self.control_widgets.setdefault(name, []).append(button)
+        if tooltip is not None:
+            Tooltip(button, tooltip)
+        return button
+
+    def preset_entries(self):
+        """[(id, displayed label), ...] - built-ins (translated label)
+        first, then custom presets (their own name, as typed)."""
+        entries = [(pid, builtin_preset_label(pid)) for pid in self.presets.builtin_ids()]
+        entries += [(name, name) for name in self.presets.custom_names()]
+        return entries
+
+    def refresh_preset_choices(self, select_id=None):
+        entries = self.preset_entries()
+        self.preset_ids = [pid for pid, _label in entries]
+        self.preset_choice.configure(values=[label for _pid, label in entries])
+        if select_id is not None and select_id in self.preset_ids:
+            self.preset_choice.current(self.preset_ids.index(select_id))
+        elif self.preset_choice.current() < 0 and self.preset_ids:
+            self.preset_choice.current(0)
+
+    def build_footer(self):
+        presets = tk.Frame(self.root, bg=BG, padx=22, pady=16)
+        presets.pack(fill="x")
+        tk.Label(presets, text=_("PRESET"), bg=BG, fg=DIM_TEXT, font=("DejaVu Sans", 9, "bold")).pack(
+            side="left", padx=(0, 12))
+        style = ttk.Style(self.root)
+        style.theme_use("clam")
+        style.configure("Studio.TCombobox", fieldbackground=CARD, background=EDGE,
+                        foreground=TEXT, arrowcolor=ACCENT, padding=5)
+        style.map("Studio.TCombobox", fieldbackground=[("readonly", CARD)],
+                  foreground=[("readonly", TEXT)], selectbackground=[("readonly", CARD)])
+        self.preset_choice = ttk.Combobox(presets, state="readonly",
+                                         style="Studio.TCombobox", width=24)
+        self.refresh_preset_choices(select_id="vinyl")
+        self.preset_choice.pack(side="left")
+        Tooltip(self.preset_choice, _("Choose a saved or built-in preset, then Load."))
+        self.load_button = self.button(presets, _("LOAD"), self.load_preset)
+        self.load_button.pack(side="left", padx=8)
+        Tooltip(self.load_button, _("Apply the selected preset's codec routing and RIAA settings."))
+        self.save_button = self.button(presets, _("SAVE AS…"), self.save_preset)
+        self.save_button.pack(side="left")
+        Tooltip(self.save_button, _("Save the current codec routing and RIAA settings as a new preset."))
+        clock_btn = self.button(presets, _("CLOCK…"), self.info)
+        clock_btn.pack(side="right")
+        Tooltip(clock_btn, _("Switch between the internal clock and the digital (S/PDIF) input."))
+        self.midi_button = self.button(presets, _("MIDI…"), self.open_midi_monitor)
+        self.midi_button.pack(side="right", padx=8)
+        Tooltip(self.midi_button, _("Open the MIDI input message monitor."))
+        midi_leds = tk.Frame(presets, bg=BG)
+        midi_leds.pack(side="right")
+        midi_led_tooltips = (
+            _("MIDI IN activity - lights briefly on bytes received. A running "
+              "MIDI clock keeps this lit almost continuously (it's ~48 "
+              "messages/second), which is expected, not a fault."),
+            _("MIDI OUT activity - lights briefly on bytes transmitted. Shows "
+              "activity only, never message content (see the MIDI monitor "
+              "window)."),
+        )
+        for index, direction in enumerate((_("IN"), _("OUT"))):
+            led = tk.Label(midi_leds, text="● " + direction, bg=BG, fg=DIM,
+                           font=("DejaVu Sans Mono", 9, "bold"))
+            led.pack(side="left", padx=(10, 0))
+            Tooltip(led, midi_led_tooltips[index])
+            self.midi_leds[index] = led
+        if self.live_apply_capable:
+            hint_text = _("Codec changes apply live while a stream is running.")
+        else:
+            hint_text = _("Codec changes during a stream apply at the next start "
+                          "· live apply comes with v0.1.12.")
+        self.hint = tk.Label(self.root, text=hint_text,
+                             bg=BG, fg=DIM_TEXT, font=("DejaVu Sans", 9), anchor="w", justify="left")
+        self.hint.pack(fill="x", padx=22)
+        bind_wraplength(self.hint, self.root, margin=44)
+        self.notice = tk.Label(self.root, text="", bg=BG, fg=ACCENT, anchor="w", font=("DejaVu Sans", 9),
+                               justify="left")
+        self.notice.pack(fill="x", padx=22, pady=(5, 12))
+        bind_wraplength(self.notice, self.root, margin=44)
+
+        self.status = tk.Label(self.root, bg="#101316", fg=DIM_TEXT, anchor="w",
+                               padx=22, pady=12, font=("DejaVu Sans Mono", 9), justify="left")
+        self.status.pack(fill="x")
+        # Deliberately NOT wraplength-bound, unlike hint/notice above: this
+        # is meant to read as one compact status line, not wrapped prose -
+        # found wrapping onto a second line on real hardware, 2026-10-16
+        # (a monospace font and the full five-field text are both wider
+        # than the demo/English text this was designed against). Fixed by
+        # not wrapping it at all plus shortening the MIDI field below,
+        # rather than letting it wrap - the window's own width (driven by
+        # the four content columns, consistently wider than this single
+        # line) keeps it from actually clipping in practice.
+        Tooltip(self.status, "\n".join([
+            _("Clock: internal word clock, or synced to the digital (S/PDIF) input."),
+            _("Digital: whether a digital input signal is currently locked."),
+            _("Stream: whether a PCM stream (playback or capture) is running, and its rate."),
+            _("MIDI: input monitor window state; independent of PCM stream state."),
+        ]))
+
+    def toggle_demo(self):
+        self.mixer.signal = self.demo_signal.get()
+        self.next_state = 0
+
+    def write(self, changes):
+        if self.writing:
+            return
+        self.writing = True
+        self.notice.configure(text=_("Applying control state…"), fg=ACCENT)
+        self.io.submit("write", changes)
+        self.render_controls()
+
+    def load_preset(self):
+        try:
+            idx = self.preset_choice.current()
+            if idx < 0 or idx >= len(self.preset_ids):
+                return
+            controls = self.presets.load(self.preset_ids[idx])
+            missing = set(controls) - set(self.values)
+            if missing:
+                raise ValueError(_("Preset controls unavailable: {names}").format(
+                    names=", ".join(sorted(missing))))
+            self.write(preset_writes(controls))
+        except (ValueError, OSError) as exc:
+            self.notice.configure(text=str(exc), fg=RED)
+
+    def save_preset(self):
+        name = simpledialog.askstring(_("Save preset"), _("Preset name"), parent=self.root)
+        if not name:
+            return
+        try:
+            path = self.presets.path(name)
+            if path.exists() and not messagebox.askyesno(_("Replace preset?"), name, parent=self.root):
+                return
+            self.presets.save(name, preset_from_values(self.values))
+            self.refresh_preset_choices(select_id=name)
+            self.notice.configure(text=_("Saved {name}").format(name=name), fg=ACCENT)
+        except (ValueError, OSError) as exc:
+            self.notice.configure(text=str(exc), fg=RED)
+
+    def about(self):
+        # Addendum (2026-10-19): a custom Toplevel, not messagebox.
+        # showinfo() - that dialog auto-sized to its message body, which
+        # came out narrower than "About PHASE X64" needed in the title
+        # bar on at least one window manager. ABOUT_MIN_WIDTH guarantees
+        # enough room regardless of body text length.
+        version = _("demo · no hardware accessed") if isinstance(self.mixer, FakeMixer) else driver_version()
+        text = _("PHASE X64 Studio control\nPanel {panel_version}\n"
+                 "Driver: {driver_version}\nCard: {card_status}\n\n"
+                 "Independent Python/Tk interface · no manufacturer artwork.\n"
+                 "Meters show stereo sample peaks in dBFS.\n"
+                 "Stream activity is derived from ALSA /proc status.").format(
+                     panel_version=VERSION, driver_version=version,
+                     card_status=self.card_status)
+        top = tk.Toplevel(self.root, bg=BG)
+        top.title(_("About PHASE X64"))
+        top.transient(self.root)
+        top.resizable(False, False)
+        top.minsize(ABOUT_MIN_WIDTH, 1)
+        tk.Label(top, text=text, bg=BG, fg=TEXT, justify="left", anchor="w",
+                font=("DejaVu Sans", 10), padx=20, pady=16).pack(fill="both", expand=True)
+        self.button(top, _("OK"), top.destroy).pack(pady=(0, 16))
+        top.bind("<Return>", lambda e: top.destroy())
+        top.bind("<Escape>", lambda e: top.destroy())
+        top.grab_set()
+        top.wait_window()
+
+    # -- shared -----------------------------------------------------------
+
+    def click(self, num):
+        if num == BTN_CLOSE:
+            self.close()
+            return
+        if num == BTN_INFO:
+            self.about()
+            return
+        if num in ENUM_BUTTONS:
+            name, item = ENUM_BUTTONS[num]
+            index = ADC_SOURCE_ITEMS[name].index(item)
+            self.write([(name, str(index))])
+            return
+        name = SWITCH_BUTTONS.get(num)
+        if not name:
+            return
+        self.write([(name, "off" if self.state.get(name) else "on")])
+
+    def info(self):
+        vals = self.values
+        if CLOCK not in vals:
+            self.notice.configure(text=_("Clock control unavailable"), fg=MUTED)
+            return
+        internal = vals.get(CLOCK, "0") == "0"
+        locked = vals.get(LOCK) == "on"
+        msg = _("Clock source: {current}\nDigital input: {input_state}\n\n"
+                "Switch clock source to {target}?").format(
+            current=_("internal") if internal else _("digital input"),
+            input_state=_("locked") if locked else _("no signal"),
+            target=_("digital input") if internal else _("internal"))
+        if messagebox.askyesno(_("Switch clock source?"), msg, parent=self.root):
+            self.write([(CLOCK, "1" if internal else "0")])
+
+    def render_controls(self):
+        vals = self.values
+        # Addendum (2026-10-19): computed once per poll, read by the
+        # ENUM_BUTTONS loop below - see feedback_loop_active()'s own
+        # comment and FEEDBACK_LOOP_TEXT.
+        feedback_loop = feedback_loop_active(vals)
+        lit = {}
+        for num, name in SWITCH_BUTTONS.items():
+            on = vals.get(name) == "on"
+            self.state[name] = on
+            lit[num] = on
+        for name, var in self.enum_vars.items():
+            try:
+                current = int(vals.get(name, -1))
+            except ValueError:
+                current = -1
+            current = current if 0 <= current < len(ADC_SOURCE_ITEMS[name]) else -1
+            var.set(current)
+            for idx, widget in enumerate(self.control_widgets.get(name, [])):
+                if hasattr(widget, "control_label") and name in self.enum_vars:
+                    widget.configure(text=("●  " if idx == current else "○  ") + widget.control_label)
+        for name, var in self.switch_vars.items():
+            var.set(vals.get(name) == "on")
+        for name, widgets in self.control_widgets.items():
+            enabled = name in vals and not self.writing
+            if name in RIAA_NAMES:
+                source = f"In {('1/2', '3/4')[RIAA_NAMES.index(name)]} Capture Source"
+                enabled = enabled and vals.get(source) == str(ADC_SOURCE_ITEMS[source].index("Phono"))
+            if name == "Direct 1/2 Mono Playback Switch":
+                enabled = enabled and vals.get("In 1/2 Capture Source") == "0" and vals.get("Direct 1/2 Playback Switch") == "on"
+            for widget in widgets:
+                widget.configure(state="normal" if enabled else "disabled")
+                if name in self.switch_vars:
+                    widget.configure(text=("■  " if vals.get(name) == "on" else "□  ") + widget.control_label,
+                                     fg=ACCENT if vals.get(name) == "on" else DIM_TEXT,
+                                     selectcolor="#36482c" if enabled else CARD)
+        can_preset = not self.writing and set(PRESET_NAMES) <= set(vals)
+        self.load_button.configure(state="normal" if can_preset else "disabled")
+        self.save_button.configure(state="normal" if can_preset else "disabled")
+        for num, (name, item) in ENUM_BUTTONS.items():
+            items = ADC_SOURCE_ITEMS[name]
+            try:
+                index = int(vals.get(name, -1))
+                cur = items[index] if 0 <= index < len(items) else None
+            except (ValueError, IndexError):
+                cur = None
+            lit[num] = (cur == item)
+            # Addendum (2026-10-19): live loopback-source indicator - this
+            # loop (unlike the enum_vars one above) runs identically in
+            # both plain and skinned mode, since skinned mode never
+            # populates self.enum_vars at all (it tracks enum state only
+            # via ENUM_BUTTONS/lit/draw()) - needed here, not there, for
+            # the indicator to actually update under a skin.
+            if item == LOOPBACK_ITEM.get(name):
+                label = self.loopback_labels.get(name)
+                if label is not None:
+                    # Addendum (2026-10-19): the feedback-loop warning
+                    # overrides the plain per-pair indicator on *both*
+                    # inputs at once - reverts the moment any one of the
+                    # four conditions goes away (feedback_loop recomputed
+                    # fresh every render_controls() call, never sticky).
+                    if feedback_loop:
+                        label.configure(text=FEEDBACK_LOOP_TEXT, fg=AMBER)
+                    else:
+                        label.configure(text=LOOPBACK_STATUS[name] if lit[num] else "", fg=ACCENT)
+        for num, on in lit.items():
+            if num in self.widgets:
+                self.draw(num, on)
+
+    def open_midi_monitor(self):
+        if self.midi_window is not None:
+            try:
+                self.midi_window.deiconify()
+                self.midi_window.lift()
+                self.midi_window.focus_set()
+            except tk.TclError:
+                pass
+            return
+        top = tk.Toplevel(self.root, bg=BG)
+        top.title(_("MIDI IN MONITOR"))
+        top.transient(self.root)
+        top.minsize(620, 260)
+        top.protocol("WM_DELETE_WINDOW", self.close_midi_monitor)
+        header = tk.Frame(top, bg=BG, padx=16, pady=12)
+        header.pack(fill="x")
+        tk.Label(header, text=_("MIDI IN MONITOR"), bg=BG, fg=TEXT,
+                 font=("DejaVu Sans", 13, "bold")).pack(side="left")
+        state = tk.Label(header, text=_("Connecting…"), bg=BG, fg=DIM_TEXT,
+                         font=("DejaVu Sans", 9))
+        state.pack(side="right")
+        Tooltip(state, _(
+            "The input monitor follows the dynamically discovered PHASE ALSA-seq port. "
+            "IN/OUT activity comes only from ALSA rawmidi byte counters."))
+        # text set below by update_midi_stream_hint() - no point writing
+        # the string twice when that call runs immediately anyway.
+        hint = tk.Label(top, text="", bg=BG, fg=DIM_TEXT, font=("DejaVu Sans", 8),
+                        anchor="w", justify="left", wraplength=580)
+        hint.pack(fill="x", padx=16, pady=(0, 8))
+        self.midi_stream_hint = hint
+        self.update_midi_stream_hint()
+        # Addendum (2026-10-19, hardware test): wrap="none" truncated long
+        # lines (an 18-byte SysEx dump) at the window edge with no
+        # horizontal scrollbar - wrap="word" keeps the whole message
+        # visible by wrapping at whitespace (so a hex byte pair never
+        # splits across the wrap) instead. Only the first line's column
+        # alignment (source/event-name/data) is expected to line up -
+        # wrapped continuation lines starting back at the left edge is
+        # normal Text widget behaviour, not something worth fighting.
+        monitor = tk.Text(
+            top, height=10, bg="#101316", fg=TEXT, insertbackground=TEXT,
+            selectbackground=EDGE, relief="flat", bd=0, padx=9, pady=7,
+            font=("DejaVu Sans Mono", 9), state="disabled", wrap="word")
+        monitor.pack(fill="both", expand=True, padx=16)
+        footer = tk.Frame(top, bg=BG, padx=16, pady=12)
+        footer.pack(fill="x")
+        show_clock_var = tk.BooleanVar(value=False)
+        show_clock = tk.Checkbutton(
+            footer, text=_("Show Clock / Active Sensing"), variable=show_clock_var,
+            bg=BG, fg=DIM_TEXT, selectcolor=CARD,
+            activebackground=BG, activeforeground=TEXT)
+        show_clock.pack(side="left")
+        Tooltip(show_clock, _(
+            "Off by default - a running MIDI clock alone is 48 messages/second, "
+            "mostly noise for a human reading this log. Only affects new "
+            "messages from now on, not history already shown."))
+        show_system_var = tk.BooleanVar(value=False)
+        show_system = tk.Checkbutton(
+            footer, text=_("Show system events"), variable=show_system_var,
+            bg=BG, fg=DIM_TEXT, selectcolor=CARD,
+            activebackground=BG, activeforeground=TEXT)
+        show_system.pack(side="left", padx=(12, 0))
+        Tooltip(show_system, _(
+            "Off by default - other ALSA clients connecting/disconnecting "
+            "(e.g. \"Port subscribed\"), not MIDI performance data. A "
+            "separate toggle from Clock/Active Sensing above: different "
+            "kind of noise, different reason to want it shown."))
+        close_button = self.button(footer, _("CLOSE"), self.close_midi_monitor)
+        close_button.pack(side="right")
+        Tooltip(close_button, _("Close the MIDI monitor and stop its aseqdump process."))
+
+        self.midi_window = top
+        self.midi_show_clock_var = show_clock_var
+        self.midi_show_system_var = show_system_var
+        self.midi_monitor_widget = monitor
+        self.midi_monitor_state = state
+        self.midi_monitor_lines = []
+        self.midi_monitor_closing = False
+        self.midi_monitor_status = "connecting"
+        self.render_midi_monitor("connecting")
+        self.pending_midi_monitor = True
+        self.next_midi_monitor = time.monotonic() + 1
+        self.io.submit("midi_start")
+        self.next_state = 0
+
+    def close_midi_monitor(self):
+        if self.midi_window is None or self.midi_monitor_closing:
+            return
+        self.midi_monitor_closing = True
+        self.midi_button.configure(state="disabled")
+        if self.midi_monitor_state is not None:
+            self.midi_monitor_state.configure(text=_("Closing…"), fg=DIM_TEXT)
+        self.io.submit("midi_stop")
+
+    def _finish_midi_monitor_close(self):
+        window = self.midi_window
+        self.midi_window = None
+        self.midi_monitor_widget = None
+        self.midi_monitor_state = None
+        self.midi_stream_hint = None
+        self.midi_show_clock_var = None
+        self.midi_show_system_var = None
+        self.midi_monitor_lines = []
+        self.midi_monitor_status = "closed"
+        self.midi_monitor_closing = False
+        self.pending_midi_monitor = False
+        self.midi_button.configure(state="normal")
+        if window is not None:
+            try:
+                window.destroy()
+            except tk.TclError:
+                pass
+        self.next_state = 0
+
+    def _replace_midi_text(self, text):
+        if self.midi_monitor_widget is None:
+            return
+        self.midi_monitor_widget.configure(state="normal")
+        self.midi_monitor_widget.delete("1.0", "end")
+        if text:
+            self.midi_monitor_widget.insert("end", text)
+        self.midi_monitor_widget.configure(state="disabled")
+        self.midi_monitor_widget.see("end")
+
+    def render_midi_monitor(self, status):
+        labels = {
+            "connected": (_("Connected"), ACCENT, _("Waiting for MIDI input…")),
+            "disconnected": (_("Disconnected"), MUTED, _("PHASE MIDI port disconnected.")),
+            "unavailable": (_("Monitor unavailable"), AMBER,
+                            _("aseqdump is unavailable or could not subscribe.")),
+            "demo": (_("Demo"), DIM_TEXT, _("MIDI monitor is offline in demo mode.")),
+            "connecting": (_("Connecting…"), DIM_TEXT, _("Resolving PHASE MIDI port…")),
+        }
+        label, colour, placeholder = labels.get(
+            status, (_("Monitor unavailable"), AMBER,
+                     _("aseqdump is unavailable or could not subscribe.")))
+        if self.midi_monitor_state is not None:
+            self.midi_monitor_state.configure(text=label, fg=colour)
+        if not self.midi_monitor_lines:
+            self._replace_midi_text(placeholder)
+        self.midi_monitor_status = status
+
+    def update_midi_stream_hint(self):
+        # Addendum (2026-10-19): informational only - never gates the
+        # LEDs, the MIDI button, or whether this window can be opened
+        # (those stay independent of PCM state, by design). Just sets
+        # the right expectation: the hardware only relays MIDI while a
+        # stream is active (see analysis/NOTES.md, "Hardware device-gate
+        # result"), so a quiet IN monitor while idle is expected, not a
+        # sign anything here is broken.
+        if self.midi_stream_hint is None:
+            return
+        base = _("OUT shows activity only (byte counter) - outgoing message "
+                 "content cannot be observed.")
+        if self.pcm_active is False:
+            text, fg = base + " " + _(
+                "No audio stream is running - MIDI only flows while one is active."), AMBER
+        else:
+            text, fg = base, DIM_TEXT
+        self.midi_stream_hint.configure(text=text, fg=fg)
+
+    def drain_midi_events(self):
+        if self.midi_monitor_widget is None:
+            return
+        batch = []
+        events = self.mixer.midi_monitor.events
+        for _ in range(MIDI_MONITOR_BATCH_SIZE):
+            try:
+                batch.append(events.get_nowait())
+            except queue.Empty:
+                break
+        if not batch:
+            return
+        # Addendum (2026-10-19): always drain up to a full batch off the
+        # queue regardless of the filter below, so the filter can't cause
+        # a backlog to build up in `events` - only whether a given line
+        # then gets *displayed* depends on the toggle, read fresh here
+        # (not latched at drain start), so flipping it takes effect on
+        # the very next batch, not just future ones.
+        show_clock = self.midi_show_clock_var is not None and self.midi_show_clock_var.get()
+        if not show_clock:
+            batch = [line for line in batch if not _MIDI_CLOCK_EVENT_RE.match(line)]
+        show_system = self.midi_show_system_var is not None and self.midi_show_system_var.get()
+        if not show_system:
+            batch = [line for line in batch if not _MIDI_SYSTEM_EVENT_RE.match(line)]
+        if not batch:
+            return
+        self.midi_monitor_lines.extend(batch)
+        del self.midi_monitor_lines[:-MIDI_MONITOR_MAX_LINES]
+        # One Tk mutation per batch, never one per incoming MIDI event.
+        self._replace_midi_text("\n".join(self.midi_monitor_lines))
+
+    def update_midi_leds(self, counters=None, now=None):
+        now = time.monotonic() if now is None else now
+        if counters is not None:
+            for index, current in enumerate(counters):
+                previous = self.midi_last_counters[index]
+                if current is not None and previous is not None and current > previous:
+                    self.midi_led_until[index] = now + MIDI_LED_HOLD_SECONDS
+                self.midi_last_counters[index] = current
+                if current is None:
+                    self.midi_led_until[index] = 0.0
+        for index, led in self.midi_leds.items():
+            available = self.midi_last_counters[index] is not None
+            led.configure(fg=ACCENT if now < self.midi_led_until[index]
+                          else DIM_TEXT if available else DIM)
+
+    def render_state(self, result):
+        # midi_counters deliberately isn't part of this tuple - see
+        # PanelIO.run()'s "peaks" branch and update_midi_leds()'s own
+        # comment for why it rides the fast 50ms poll instead of this
+        # slow ~1s one (LED hold needs sub-second resolution to look
+        # right; MIDI device availability below doesn't).
+        self.values, rate, active, card, midi_available = result
+        self.card_status = (_("demo") if isinstance(self.mixer, FakeMixer) else
+                            _("not connected") if card is None else
+                            _("hw:{card} · PHASE X64").format(card=card))
+        self.render_controls()
+        for num, r in RATE_BUTTONS.items():
+            if num in self.widgets:
+                self.draw(num, rate == r)
+        rate_text = f"{rate / 1000:g} kHz" if rate else None
+        clock = {"0": _("Internal"), "1": _("Digital")}.get(self.values.get(CLOCK), "—")
+        lock = {"on": _("locked"), "off": _("unlocked")}.get(self.values.get(LOCK), "—")
+        # Stream state and samplerate merged into one field, e.g. "idle" or
+        # "running 48 kHz" - two separate "idle"/"Stream: no" fields said
+        # the same thing twice (fix: panel hardware review, 2026-10-16).
+        if active:
+            stream = _("running {rate}").format(rate=rate_text) if rate_text else _("running")
+        elif active is False:
+            stream = _("idle")
+        else:
+            stream = _("unknown")
+        # The rawmidi/ALSA-seq path is independent of PCM. In particular, a
+        # PipeWire/WirePlumber bridge can hold it open while PCM is idle.
+        # Never infer MIDI availability or activity from `active` here -
+        # self.pcm_active below feeds only the monitor window's own
+        # informational hint, nothing that gates LEDs/button/window.
+        self.pcm_active = active
+        self.update_midi_stream_hint()
+        # Addendum (2026-10-19, hardware test): this field used to show
+        # the monitor *window's* connection state ("closed" whenever the
+        # window itself was closed) - misleading, since MIDI (the LEDs,
+        # the port) works fine with the window closed; that state belongs
+        # only in the monitor window, which already shows "Connected" of
+        # its own. This is the rawmidi *device's* presence instead
+        # (self.mixer.midi_available() - same one the LEDs' own
+        # availability-vs-no-counters-yet distinction already uses),
+        # entirely independent of whether the monitor window has ever
+        # been opened.
+        midi = (_("available") if midi_available else
+                _("unavailable") if midi_available is False else
+                _("unknown"))
+        self.status.configure(text=_(
+            "● {status}    |    Clock: {clock}    |    Digital: {lock}    |    "
+            "Stream: {stream}    |    MIDI: {midi}").format(
+                status=self.card_status, clock=clock, lock=lock, stream=stream, midi=midi))
+
+    def visibility(self, event):
+        if event.widget is not self.root:
+            return
+        if str(event.type) in ("15", "Visibility"):
+            self.obscured = str(event.state) in ("2", "VisibilityFullyObscured")
+        elif str(event.type) in ("19", "Map"):
+            self.obscured = False
+        if self.visible():
+            self.io.visible.set()
+        else:
+            self.io.visible.clear()
+
+    def visible(self):
+        return bool(self.root.winfo_viewable()) and not self.obscured and self.root.state() != "iconic"
+
+    def tick(self):
+        if self.closed:
+            return
+        now = time.monotonic()
+        if self.visible():
+            self.io.visible.set()
+        else:
+            self.io.visible.clear()
+        while True:
+            try:
+                kind, result, error = self.io.results.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "state":
+                self.pending_state = False
+                if error:
+                    self.render_state(({}, None, None, None, None))
+                    self.notice.configure(text=error, fg=RED)
+                else:
+                    self.render_state(result)
+            elif kind == "peaks":
+                self.pending_peaks = False
+                peaks, midi_counters = (None, None) if error else result
+                for name, meter in self.meters.items():
+                    meter.draw(None if error else peaks.get(name))
+                self.update_midi_leds(midi_counters)
+            elif kind == "write":
+                self.writing = False
+                self.next_state = 0
+                if error:
+                    text = _("Apply failed (some controls may have changed): {error}").format(error=error)
+                elif self.live_apply_capable:
+                    text = _("Applied live.")
+                else:
+                    text = _("Control state written · restart an active stream to apply codec routing.")
+                self.notice.configure(text=text, fg=RED if error else ACCENT)
+            elif kind == "midi_start":
+                self.pending_midi_monitor = False
+                if self.midi_window is not None and not self.midi_monitor_closing:
+                    self.render_midi_monitor("unavailable" if error else result)
+            elif kind == "midi_stop":
+                self._finish_midi_monitor_close()
+        if self.io.changed.is_set():
+            self.io.changed.clear()
+            self.next_state = 0
+        monitor_status = self.mixer.midi_monitor.status()
+        if self.midi_window is not None and not self.midi_monitor_closing and \
+                monitor_status != self.midi_monitor_status:
+            # Subscription failures can happen just after Popen; reflect the
+            # reader thread's state promptly instead of waiting for PCM/control
+            # state or using it as a proxy.
+            self.render_midi_monitor(monitor_status)
+        self.drain_midi_events()
+        self.update_midi_leds(now=now)
+        if self.midi_window is not None and not self.midi_monitor_closing and \
+                not self.pending_midi_monitor and now >= self.next_midi_monitor:
+            self.pending_midi_monitor = True
+            self.next_midi_monitor = now + 1
+            self.io.submit("midi_start")
+        if self.io.visible.is_set():
+            if not self.pending_state and now >= self.next_state:
+                self.pending_state = True
+                self.next_state = now + 1
+                self.io.submit("state")
+            if not self.pending_peaks and now >= self.next_peak:
+                self.pending_peaks = True
+                self.next_peak = now + .05
+                self.io.submit("peaks")
+        self.refresh_job = self.root.after(50, self.tick)
+
+
+def _lock_path():
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime_dir:
+        return Path(runtime_dir) / (APP + ".lock")
+    return Path(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))) / APP / "panel.lock"
+
+
+def acquire_single_instance_lock(bypass):
+    """Non-blocking fcntl flock so a second `phasex64-panel` refuses to
+    start while one is already running (the panel is usually launched
+    from an application menu, so a stray second instance is easy to
+    start without noticing - see analysis/NOTES.md "Open items").
+
+    Returns (True, file-or-None) if bypassed or acquired - the caller
+    must keep a reference to the returned file object for as long as the
+    lock should be held; closing it (including implicitly, at process
+    exit for any reason, even SIGKILL) releases the flock automatically,
+    so there's no stale-lock case to handle. Returns (False, None) if
+    another instance already holds it.
+    """
+    if bypass:
+        return True, None
+    path = _lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = open(path, "w")
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock_file.close()
+        return False, None
+    return True, lock_file
+
+
+def show_already_running_dialog(root):
+    """Small themed dialog (same dark-theme pattern as Panel.about()'s own
+    Toplevel) telling the user a panel instance is already running, since
+    the panel is normally started from an application menu - a message on
+    stderr alone would never be seen there.
+    """
+    root.withdraw()
+    top = tk.Toplevel(root, bg=BG)
+    top.title(APP)
+    top.resizable(False, False)
+    tk.Label(top, text=_("PHASE X64 panel is already running"), bg=BG, fg=TEXT,
+            justify="left", anchor="w", font=("DejaVu Sans", 10),
+            padx=20, pady=16).pack(fill="both", expand=True)
+    ok = tk.Button(top, text=_("OK"), command=top.destroy, bg=EDGE, fg=TEXT,
+                   activebackground="#48545e", activeforeground=ACCENT,
+                   relief="flat", bd=0, padx=13, pady=7,
+                   highlightthickness=1, highlightbackground=EDGE)
+    ok.pack(pady=(0, 16))
+    top.bind("<Return>", lambda e: top.destroy())
+    top.bind("<Escape>", lambda e: top.destroy())
+    top.protocol("WM_DELETE_WINDOW", top.destroy)
+    # Deliberately NOT top.transient(root): root is withdrawn (never
+    # shown - it exists only as this dialog's technical owner before
+    # this process exits), and at least one window manager tested
+    # (KWin) follows ICCCM to the letter here and refuses to ever map a
+    # window that's transient-for a withdrawn one - the dialog silently
+    # never appears, hanging in wait_window() forever with nothing the
+    # user could click. grab_set() alone still gets the modal behaviour
+    # this dialog actually needs.
+    top.grab_set()
+    top.wait_window()
+
+
+def main():
+    ap = argparse.ArgumentParser(description="PHASE X64 USB control panel")
+    ap.add_argument("--import-skin", metavar="DIR",
+                    help="copy the skin from the Windows driver package")
+    ap.add_argument("--skin", metavar="DIR", nargs="?", const="auto", help="opt in to an imported Windows skin")
+    ap.add_argument("--plain", action="store_true", help="use the default native studio interface")
+    ap.add_argument("--version", action="version", version=VERSION)
+    ap.add_argument("--demo", action="store_true", help="offline demo with simulated peak controls")
+    ap.add_argument("--demo-active", action="store_true", help="start --demo with its signal generator enabled")
+    ap.add_argument("--fake-mixer", action="store_true",
+                    help="use an in-memory fake mixer instead of a real card "
+                         "(for testing without hardware)")
+    # Test-only hook (test_panel.py's signal-handling tests): spawns one
+    # long-lived stand-in child the same way (_with_pdeathsig()-wrapped
+    # Popen) the real alsactl/aseqdump monitors do, and prints its PID so
+    # a test can watch whether it outlives this process. Hidden from
+    # --help - not a real feature.
+    ap.add_argument("--test-spawn-stand-in-child", action="store_true",
+                    help=argparse.SUPPRESS)
+    args = ap.parse_args()
+
+    if args.import_skin:
+        import_skin(args.import_skin)
+        return
+
+    if args.demo_active and not args.demo:
+        ap.error("--demo-active requires --demo")
+    if args.demo or args.fake_mixer:
+        mixer = FakeMixer(demo=args.demo)
+        mixer.signal = args.demo_active
+    else:
+        card = find_card()
+        mixer = Mixer(card)
+    skin = None if args.plain or not args.skin else find_skin(None if args.skin == "auto" else args.skin)
+    if args.skin and not args.plain and not skin:
+        ap.error("skin not found; import one with --import-skin or omit --skin")
+
+    # className sets WM_CLASS's class part - Tk capitalizes it
+    # ("Phasex64-panel", confirmed via winfo_class()), so the .desktop
+    # file's StartupWMClass is "Phasex64-panel" too, not this literal
+    # string. Lets the window manager/taskbar associate this window with
+    # the launcher (and its icon) even launched from a terminal rather
+    # than the .desktop entry.
+    root = tk.Tk(className="phasex64-panel")
+    icons = find_icon_images()
+    if icons:
+        root.iconphoto(True, *icons)
+
+    # Demo/fake-mixer instances never touch real hardware, so several can
+    # run at once harmlessly (and tests rely on that) - bypass the lock
+    # for them automatically. PHASEX64_PANEL_NO_LOCK is the explicit
+    # override for anything else that needs to bypass it (e.g. a test
+    # exercising the lock mechanism itself with a real-mixer-shaped run).
+    bypass_lock = args.demo or args.fake_mixer or \
+        os.environ.get("PHASEX64_PANEL_NO_LOCK") == "1"
+    acquired, lock_file = acquire_single_instance_lock(bypass_lock)
+    if not acquired:
+        show_already_running_dialog(root)
+        root.destroy()
+        return
+
+    panel = Panel(root, mixer, skin)
+
+    if args.test_spawn_stand_in_child:
+        stand_in = subprocess.Popen(
+            _with_pdeathsig([sys.executable, "-c", "import time; time.sleep(60)"]))
+        print("stand_in_pid %d" % stand_in.pid, flush=True)
+
+    # Signal handlers run on the main thread only, and only between Python
+    # bytecode instructions - never safe to touch Tk widgets from here
+    # directly (wrong thread-safety assumptions even though this *is* the
+    # main thread, since Tk's C-level mainloop may be mid-callback).
+    # root.after(0, ...) hands the real cleanup back to Tk's own event
+    # loop instead, same as WM_DELETE_WINDOW - no second close path.
+    # Tk returns control to Python bytecode (where a pending signal
+    # actually gets delivered) on every after() callback; tick()'s own
+    # 50ms self-reschedule (see Panel.tick) already guarantees that
+    # happens often enough for this to run well within the ~0.5s this
+    # needs to beat, with no change needed there.
+    def handle_terminate(signum, frame):
+        root.after(0, panel.close)
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, handle_terminate)
+
+    try:
+        root.mainloop()
+    finally:
+        panel.close()
+
+
+if __name__ == "__main__":
+    main()

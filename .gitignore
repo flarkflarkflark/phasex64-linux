@@ -1,0 +1,40 @@
+*.o
+*.ko
+*.mod
+*.mod.c
+.*.cmd
+.module-common.o
+Module.symvers
+modules.order
+*.zst
+*.pkg.tar*
+linux/src/
+linux/pkg/
+*.wav
+__pycache__/
+# compiled .mo build artifacts (regenerate from po/*.po with msgfmt, or
+# `linux/phasex64-panel/po/build.sh` - see po/README.md); the PKGBUILD
+# builds and installs these itself, so they're never committed
+linux/phasex64-panel/locale/
+# rasterized app-icon PNGs (regenerate from icon.svg with
+# `linux/phasex64-panel/build-icons.sh`); the PKGBUILD builds and installs
+# its own copy into the hicolor icon theme, so these are never committed
+linux/phasex64-panel/icons/
+tests/hw/data/*.json
+tests/hw/data/failure_diag/
+tests/hw/data/kill_stress_normal_iter*.log
+tests/hw/data/kill_stress_failure/
+tests/hw/reaper_run/*.txt
+tests/hw/captures/*.pcapng
+tests/hw/captures/*.pcap
+# vendor material and anything derived from it (Windows driver binaries,
+# .inf files, extracted strings, decompiler/disassembler output) - kept
+# locally for reverse engineering, never distributed; see analysis/README.md
+original-driver/
+analysis/decomp/
+analysis/*.asm
+# raw kernel logs (host/hardware-identifying); quote trimmed excerpts in
+# docs instead
+tests/hw/kernel.log
+# agent session handover notes
+analysis/MORNING-REPORT.md

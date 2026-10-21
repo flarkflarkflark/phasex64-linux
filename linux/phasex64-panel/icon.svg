@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+<!-- Copyright (C) 2026 flarkflarkflark -->
+<!-- phasex64-panel app icon: an original design, no manufacturer artwork.
+     A rising four-bar level meter (the panel's own peak-meter motif) in
+     lime green on a dark anthracite rounded square. Deliberately flat and
+     text-free so it stays legible rasterized down to 16px - see
+     linux/phasex64-panel/po/README.md-style notes in PKGBUILD for how the
+     PNG sizes are generated from this single source at package build time. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="#171b20"/>
+  <rect x="30" y="130" width="34" height="70" rx="8" fill="#c5f36b"/>
+  <rect x="84" y="90" width="34" height="110" rx="8" fill="#c5f36b"/>
+  <rect x="138" y="50" width="34" height="150" rx="8" fill="#c5f36b"/>
+  <rect x="192" y="10" width="34" height="190" rx="8" fill="#c5f36b"/>
+</svg>

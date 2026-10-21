@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=PHASE X64 USB
+Comment=Control panel for the PHASE X64 USB audio interface
+Exec=phasex64-panel
+Icon=phasex64-panel
+StartupWMClass=Phasex64-panel
+Categories=AudioVideo;Audio;Settings;

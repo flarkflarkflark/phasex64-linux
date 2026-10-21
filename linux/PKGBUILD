@@ -1,0 +1,89 @@
+# Build from this directory with: makepkg -si
+pkgbase=phasex64
+pkgname=(snd-usb-phasex64-dkms phasex64-panel phasex64-wireplumber)
+pkgver=0.9.0
+# One project version for everything in this repo - the driver's
+# MODULE_VERSION, dkms.conf's PACKAGE_VERSION, the panel's VERSION and
+# this pkgver - starting with 0.9.0, the first public release (the
+# project jumped there from 0.1.13; the panel was separately numbered
+# 0.2.0 before that). pkgrel is only for packaging-only changes, per
+# normal Arch convention, and resets to 1 whenever pkgver changes.
+pkgrel=1
+arch=(any)
+license=(GPL-2.0-only)
+makedepends=(gettext librsvg)
+source=()
+
+build() {
+  # Compile every translation (po/README.md) into .mo files here; packaged
+  # below into /usr/share/locale. Not the same as po/build.sh, which
+  # builds into the source tree itself for running phasex64-panel
+  # uninstalled - this build() output only ever lands in the package.
+  for po in "$startdir"/phasex64-panel/po/*.po; do
+    lang="$(basename "$po" .po)"
+    install -d "$srcdir/locale/$lang/LC_MESSAGES"
+    msgfmt "$po" -o "$srcdir/locale/$lang/LC_MESSAGES/phasex64-panel.mo"
+  done
+
+  # Rasterize icon.svg into the hicolor theme's size directories here;
+  # packaged below. Not the same as build-icons.sh, which rasterizes into
+  # the source tree for running phasex64-panel uninstalled.
+  for size in 16 24 32 48 64 128 256; do
+    install -d "$srcdir/icons/${size}x${size}/apps"
+    rsvg-convert -w "$size" -h "$size" \
+      "$startdir/phasex64-panel/icon.svg" \
+      -o "$srcdir/icons/${size}x${size}/apps/phasex64-panel.png"
+  done
+}
+
+package_snd-usb-phasex64-dkms() {
+  pkgdesc="ALSA driver for the TerraTec/TerraSoniq PHASE X64 USB (DKMS)"
+  depends=(dkms)
+  local dst="$pkgdir/usr/src/snd-usb-phasex64-$pkgver"
+  install -Dm644 "$startdir/snd-usb-phasex64/phasex64.c" "$dst/phasex64.c"
+  install -Dm644 "$startdir/snd-usb-phasex64/midi_in_filter.h" "$dst/midi_in_filter.h"
+  install -Dm644 "$startdir/snd-usb-phasex64/Makefile" "$dst/Makefile"
+  install -Dm644 "$startdir/snd-usb-phasex64/dkms.conf" "$dst/dkms.conf"
+}
+
+package_phasex64-panel() {
+  pkgdesc="Control panel for the TerraTec/TerraSoniq PHASE X64 USB"
+  # hicolor-icon-theme/gtk-update-icon-cache: the icon installed below
+  # only shows up (and stays current) because gtk-update-icon-cache's own
+  # pacman hook (/usr/share/libalpm/hooks/gtk-update-icon-cache.hook)
+  # fires automatically on any install/upgrade/remove touching
+  # usr/share/icons/*/ - no custom .install script needed, just these two
+  # present so that hook exists and the base theme index does too.
+  depends=(python tk alsa-utils hicolor-icon-theme gtk-update-icon-cache)
+  install -Dm755 "$startdir/phasex64-panel/phasex64-panel" "$pkgdir/usr/bin/phasex64-panel"
+  install -Dm644 "$startdir/phasex64-panel/phasex64-panel.desktop" \
+    "$pkgdir/usr/share/applications/phasex64-panel.desktop"
+  for mo in "$srcdir"/locale/*/LC_MESSAGES/phasex64-panel.mo; do
+    lang="$(basename "$(dirname "$(dirname "$mo")")")"
+    install -Dm644 "$mo" "$pkgdir/usr/share/locale/$lang/LC_MESSAGES/phasex64-panel.mo"
+  done
+  install -Dm644 "$startdir/phasex64-panel/icon.svg" \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/phasex64-panel.svg"
+  for png in "$srcdir"/icons/*/apps/phasex64-panel.png; do
+    size="$(basename "$(dirname "$(dirname "$png")")")"
+    install -Dm644 "$png" "$pkgdir/usr/share/icons/hicolor/$size/apps/phasex64-panel.png"
+  done
+}
+
+package_phasex64-wireplumber() {
+  pkgdesc="WirePlumber Pro Audio profile/rate/format pins for the PHASE X64 USB (optional)"
+  # A separate, optional package rather than folded into
+  # phasex64-panel: installing this changes session-manager behaviour
+  # for *every* user on the machine (forces the "Pro Audio" device
+  # profile, disables idle suspend - see linux/README.md, "PipeWire /
+  # JACK", "Suspend" for that trade-off), which isn't something
+  # everyone installing the panel for its GUI mixer necessarily wants
+  # - e.g. someone with no JACK/REAPER use who'd rather the device
+  # suspend normally, or who has their own routing preference already.
+  # Keeping it a separate, explicitly-installed package means that
+  # system-wide policy change is opted into, not a side effect of
+  # wanting the mixer GUI.
+  depends=(wireplumber)
+  install -Dm644 "$startdir/wireplumber/51-phasex64-pro-audio.conf" \
+    "$pkgdir/usr/share/wireplumber/wireplumber.conf.d/51-phasex64-pro-audio.conf"
+}

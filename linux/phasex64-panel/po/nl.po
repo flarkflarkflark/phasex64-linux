@@ -1,0 +1,789 @@
+# Dutch translations for phasex64-panel package.
+# This file is put in the public domain.
+# Automatically generated, 2026.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: phasex64-panel 0.9.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-21 00:52+0200\n"
+"PO-Revision-Date: 2026-10-16 08:28+0200\n"
+"Last-Translator: flarkflarkflark\n"
+"Language-Team: Dutch\n"
+"Language: nl\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: phasex64-panel:261
+msgid ""
+"Microphone (XLR, Ch.1 = left) or Hi-Z/Line (jack, Ch.2 = right). Gain and "
+"48V are set on the unit itself, not here."
+msgstr ""
+"Microfoon (XLR, Ch.1 = links) of Hi-Z/Line (jack, Ch.2 = rechts). Gain en "
+"48V worden op het apparaat zelf ingesteld, niet hier."
+
+#: phasex64-panel:263
+msgid "Turntable input with phono preamp. Use with Phono RIAA."
+msgstr ""
+"Platenspeleringang met phono-voorversterker. Gebruik samen met Phono RIAA."
+
+#: phasex64-panel:264
+msgid "Line-level input (RCA)."
+msgstr "Ingang op lijnniveau (RCA)."
+
+#: phasex64-panel:278
+msgid ""
+"Records Out 3/4's own analog output (incl. Direct), not a copy of In 3/4. If "
+"you monitor this input back to Out 3/4 in your DAW, disable that track's "
+"input monitoring - otherwise it's a feedback loop."
+msgstr ""
+"Legt Out 3/4's eigen analoge uitgang vast (incl. Direct), geen kopie van In "
+"3/4. Als je deze ingang in je DAW terugmonitort naar Out 3/4, schakel dan de "
+"inputmonitoring van die track uit - anders ontstaat een feedbacklus."
+
+#: phasex64-panel:282
+msgid ""
+"Records Out 1/2's own analog output (incl. Direct), not a copy of In 1/2. If "
+"you monitor this input back to Out 1/2 in your DAW, disable that track's "
+"input monitoring - otherwise it's a feedback loop."
+msgstr ""
+"Legt Out 1/2's eigen analoge uitgang vast (incl. Direct), geen kopie van In "
+"1/2. Als je deze ingang in je DAW terugmonitort naar Out 1/2, schakel dan de "
+"inputmonitoring van die track uit - anders ontstaat een feedbacklus."
+
+#: phasex64-panel:286
+msgid "Internal sound module (route name in the driver: Sound Module)."
+msgstr "Interne soundmodule (routenaam in de driver: Sound Module)."
+
+#: phasex64-panel:287
+msgid "Input muted."
+msgstr "Ingang gedempt."
+
+#: phasex64-panel:307
+msgid "Records OUT 3/4 output (analog, incl. Direct)"
+msgstr "Legt OUT 3/4-uitgang vast (analoog, incl. Direct)"
+
+#: phasex64-panel:308
+msgid "Records OUT 1/2 output (analog, incl. Direct)"
+msgstr "Legt OUT 1/2-uitgang vast (analoog, incl. Direct)"
+
+#: phasex64-panel:312
+msgid ""
+"Capturing Out 3/4's own analog output stage (Direct + PCM as routed) - "
+"hardware-confirmed, not a copy of In 3/4. Roughly 0.3-0.8 dB lower than the "
+"source, down to the analog noise floor (~-85 dBFS) when Out 3/4 is silent. "
+"Different signal from capture channels 5/6, which only ever reflect Out "
+"1/2's digital PCM content, pre-Direct. If a track in your DAW monitors this "
+"input back to Out 3/4, turn off that track's input monitoring - otherwise "
+"it's a feedback loop."
+msgstr ""
+"Legt Out 3/4's eigen analoge uitgangstrap vast (Direct + PCM zoals "
+"gerouteerd) - hardware-bevestigd, geen kopie van In 3/4. Ongeveer 0,3-0,8 dB "
+"lager dan de bron, tot aan de analoge ruisvloer (~-85 dBFS) wanneer Out 3/4 "
+"stil is. Een ander signaal dan opnamekanalen 5/6, die altijd alleen Out "
+"1/2's digitale PCM-inhoud weergeven, vóór Direct. Als een track in je DAW "
+"deze ingang terugmonitort naar Out 3/4, schakel dan de inputmonitoring van "
+"die track uit - anders ontstaat een feedbacklus."
+
+#: phasex64-panel:321
+msgid ""
+"Capturing Out 1/2's own analog output stage (Direct + PCM as routed) - "
+"presumed, not independently hardware-tested (Loopback 3/4's own behaviour "
+"was; see analysis/loopback-and-monitoring.md). If a track in your DAW "
+"monitors this input back to Out 1/2, turn off that track's input monitoring "
+"- otherwise it's a feedback loop."
+msgstr ""
+"Legt Out 1/2's eigen analoge uitgangstrap vast (Direct + PCM zoals "
+"gerouteerd) - aangenomen, niet onafhankelijk hardware-getest (dat is wel "
+"gedaan voor Loopback 3/4's eigen gedrag; zie analysis/loopback-and-"
+"monitoring.md). Als een track in je DAW deze ingang terugmonitort naar Out "
+"1/2, schakel dan de inputmonitoring van die track uit - anders ontstaat een "
+"feedbacklus."
+
+#: phasex64-panel:335
+msgid "Capture 5/6 = Loopback Out 1/2 (digital, PCM only, pre-Direct)"
+msgstr "Opname 5/6 = Loopback Out 1/2 (digitaal, alleen PCM, vóór Direct)"
+
+#: phasex64-panel:337
+msgid ""
+"Always-on digital tap of the PCM/DSP data sent to Out 1/2, bit-exact, before "
+"the Direct/PCM output mixing stage - not affected by the Direct or PCM Out "
+"1/2 switches, and not the same mechanism as the Loopback capture sources "
+"(which are analog and after that mixing stage). No ALSA control of its own - "
+"available directly in a 6-channel capture stream (In 1/2, In 3/4, 5/6). See "
+"linux/README.md, \"PipeWire / JACK\" and \"Recording what you hear\", for "
+"how to use it."
+msgstr ""
+"Altijd actieve digitale aftak van de PCM/DSP-data die naar Out 1/2 gestuurd "
+"wordt, bit-exact, vóór de Direct/PCM-uitgangsmixtrap - niet beïnvloed door "
+"de Direct- of PCM Out 1/2-schakelaars, en niet hetzelfde mechanisme als de "
+"Loopback-opnamebronnen (die analoog zijn en na die mixtrap komen). Geen "
+"eigen ALSA-control - rechtstreeks beschikbaar in een 6-kanaals opnamestream "
+"(In 1/2, In 3/4, 5/6). Zie linux/README.md, \"PipeWire / JACK\" en \"Opnemen "
+"wat je hoort\", voor hoe je dit gebruikt."
+
+#: phasex64-panel:355
+msgid "Feedback loop: both loopbacks + Direct on both outputs"
+msgstr "Feedbacklus: beide loopbacks + Direct aan op beide uitgangen"
+
+#: phasex64-panel:357
+msgid ""
+"Both Loopback sources selected with Direct on for both outputs closes an "
+"analog loop (In 1/2 -> Direct -> Out 1/2 -> Loopback -> In 3/4 -> Direct -> "
+"Out 3/4 -> Loopback -> In 1/2) - hardware-confirmed to raise both inputs to "
+"about -68.7 dBFS (vs. an ~-85 dBFS floor with the loop open). Only noise at "
+"unity gain, but it can ring/oscillate if gain goes up. Turn off Direct on "
+"one output, or use only one Loopback source, to break the loop."
+msgstr ""
+"Beide Loopback-bronnen geselecteerd met Direct aan voor beide uitgangen "
+"sluit een analoge lus (In 1/2 -> Direct -> Out 1/2 -> Loopback -> In 3/4 -> "
+"Direct -> Out 3/4 -> Loopback -> In 1/2) - hardware-bevestigd om beide "
+"ingangen naar ongeveer -68,7 dBFS te laten stijgen (t.o.v. een ruisvloer van "
+"~-85 dBFS met de lus open). Bij unity gain is het alleen ruis, maar het kan "
+"gaan rinkelen/oscilleren als het gain omhoog gaat. Zet Direct uit op één "
+"uitgang, of gebruik maar één Loopback-bron, om de lus te doorbreken."
+
+#: phasex64-panel:384 phasex64-panel:1836
+msgid "DSP"
+msgstr "DSP"
+
+#: phasex64-panel:512
+msgid "not loaded"
+msgstr "niet geladen"
+
+#: phasex64-panel:750
+msgid "ALSA control access unavailable"
+msgstr "ALSA-control niet bereikbaar"
+
+#: phasex64-panel:752
+msgid "ALSA control request failed"
+msgstr "ALSA-controlverzoek mislukt"
+
+#: phasex64-panel:776
+#, python-brace-format
+msgid "Control unavailable: {name}"
+msgstr "Control niet beschikbaar: {name}"
+
+#: phasex64-panel:1049
+msgid "Record vinyl"
+msgstr "Vinyl opnemen"
+
+#: phasex64-panel:1049
+msgid "Monitor"
+msgstr "Monitoren"
+
+#: phasex64-panel:1066
+msgid "Preset must contain exactly the codec and RIAA controls"
+msgstr "Preset moet precies de codec- en RIAA-controls bevatten"
+
+#: phasex64-panel:1070
+#, python-brace-format
+msgid "Invalid source: {name}"
+msgstr "Ongeldige bron: {name}"
+
+#: phasex64-panel:1072
+#, python-brace-format
+msgid "Expected an on/off value: {name}"
+msgstr "Aan/uit-waarde verwacht: {name}"
+
+#: phasex64-panel:1075
+msgid "Direct mono 1/2 requires Mic/HiZ/Line and Direct on"
+msgstr "Direct mono 1/2 vereist Mic/HiZ/Line en Direct aan"
+
+#: phasex64-panel:1083
+#, python-brace-format
+msgid "Cannot save: control unavailable: {name}"
+msgstr "Kan niet opslaan: control niet beschikbaar: {name}"
+
+#: phasex64-panel:1089
+#, python-brace-format
+msgid "Invalid control value: {name}"
+msgstr "Ongeldige controlwaarde: {name}"
+
+#: phasex64-panel:1127
+msgid "Use letters, numbers, spaces, - or _ in a preset name"
+msgstr "Gebruik letters, cijfers, spaties, - of _ in een presetnaam"
+
+#: phasex64-panel:1136
+msgid "Preset is too large"
+msgstr "Preset is te groot"
+
+#: phasex64-panel:1139
+msgid "Unsupported preset schema"
+msgstr "Niet-ondersteund presetschema"
+
+#: phasex64-panel:1146
+msgid "Choose a different name; built-in examples are read-only"
+msgstr "Kies een andere naam; ingebouwde voorbeelden zijn alleen-lezen"
+
+#: phasex64-panel:1369
+msgid "L / R   ·   SAMPLE PEAK"
+msgstr "L / R   ·   SAMPLE PEAK"
+
+#: phasex64-panel:1396
+msgid "−∞ dBFS"
+msgstr "−∞ dBFS"
+
+#: phasex64-panel:1396
+#, python-brace-format
+msgid "{value:.1f} dBFS"
+msgstr "{value:.1f} dBFS"
+
+#: phasex64-panel:1408
+msgid "needs driver ≥ 0.1.11.5"
+msgstr "vereist driver ≥ 0.1.11.5"
+
+#: phasex64-panel:1543 phasex64-panel:2173 phasex64-panel:2286
+msgid "Connecting…"
+msgstr "Verbinden…"
+
+#: phasex64-panel:1544
+msgid "PHASE X64 · Studio control"
+msgstr "PHASE X64 · Studiobediening"
+
+#: phasex64-panel:1554
+#, python-brace-format
+msgid "Phono RIAA {pair}"
+msgstr "Phono RIAA {pair}"
+
+#: phasex64-panel:1689
+msgid ""
+"Applies the RIAA equalisation curve in the driver (as on Windows). Only "
+"active when the source is Phono."
+msgstr ""
+"Past de RIAA-egalisatiecurve toe in de driver (net als onder Windows). "
+"Alleen actief als de bron Phono is."
+
+#: phasex64-panel:1693
+msgid "(select Phono first)"
+msgstr "(kies eerst Phono)"
+
+#: phasex64-panel:1703
+msgid ""
+"Sums Ch.1 (mic) and Ch.2 (Hi-Z/Line) to both sides, instead of mic left / Hi-"
+"Z right."
+msgstr ""
+"Telt Ch.1 (mic) en Ch.2 (Hi-Z/Line) bij elkaar op naar beide kanten, in "
+"plaats van mic links / Hi-Z rechts."
+
+#: phasex64-panel:1708
+msgid "(needs Mic/HiZ/Line source and Direct on)"
+msgstr "(vereist bron Mic/HiZ/Line en Direct aan)"
+
+#: phasex64-panel:1726
+msgid "USB AUDIO  /  STUDIO CONTROL"
+msgstr "USB-AUDIO  /  STUDIOBEDIENING"
+
+#: phasex64-panel:1728
+msgid "ABOUT"
+msgstr "OVER"
+
+#: phasex64-panel:1730
+msgid "Panel and driver version, card status."
+msgstr "Panel- en driverversie, kaartstatus."
+
+#: phasex64-panel:1733
+msgid "DEMO SIGNAL"
+msgstr "DEMOSIGNAAL"
+
+#: phasex64-panel:1737
+msgid "Simulate an audio signal for the peak meters (demo mode only)."
+msgstr "Simuleert een audiosignaal voor de peakmeters (alleen in demomodus)."
+
+#: phasex64-panel:1755
+msgid "In 1/2"
+msgstr "In 1/2"
+
+#: phasex64-panel:1755
+msgid "In 3/4"
+msgstr "In 3/4"
+
+#: phasex64-panel:1756
+msgid "Out 1/2"
+msgstr "Uit 1/2"
+
+#: phasex64-panel:1756
+msgid "Out 3/4"
+msgstr "Uit 3/4"
+
+#: phasex64-panel:1768
+msgid "CAPTURE SOURCE"
+msgstr "OPNAMEBRON"
+
+#: phasex64-panel:1768
+msgid "OUTPUT ROUTING"
+msgstr "UITGANGSROUTERING"
+
+#: phasex64-panel:1805
+msgid "PHONO RIAA"
+msgstr "PHONO RIAA"
+
+#: phasex64-panel:1824
+msgid "DIRECT"
+msgstr "DIRECT"
+
+#: phasex64-panel:1825
+msgid ""
+"Analog direct monitoring of the input, without latency. Not RIAA-equalised, "
+"so phono sounds thin."
+msgstr ""
+"Analoge directe monitoring van de ingang, zonder latency. Niet RIAA-"
+"geëqualiseerd, dus phono klinkt dun."
+
+#: phasex64-panel:1827
+msgid "PCM"
+msgstr "PCM"
+
+#: phasex64-panel:1828
+msgid "Playback from your software (e.g. your DAW) to this output."
+msgstr "Afspelen vanuit je software (bijvoorbeeld je DAW) naar deze uitgang."
+
+#: phasex64-panel:1829
+msgid "PCM MONO"
+msgstr "PCM MONO"
+
+#: phasex64-panel:1830
+msgid "Sums left and right to mono."
+msgstr "Telt links en rechts samen tot mono."
+
+#: phasex64-panel:1833
+msgid "DIRECT MONO"
+msgstr "DIRECT MONO"
+
+#: phasex64-panel:1840
+msgid ""
+"Routes can be combined.\n"
+"Mono follows its hardware interlock."
+msgstr ""
+"Routes kunnen gecombineerd worden.\n"
+"Mono volgt de hardware-interlock."
+
+#: phasex64-panel:1842
+msgid ""
+"Routes can be combined.\n"
+"DSP is the sound-module route."
+msgstr ""
+"Routes kunnen gecombineerd worden.\n"
+"DSP is de soundmodule-route."
+
+#: phasex64-panel:1847
+msgid "PCM peaks only · excludes Direct/DSP"
+msgstr "Alleen PCM-peaks · exclusief Direct/DSP"
+
+#: phasex64-panel:1868
+msgid ""
+"Sample peak of the PCM signal. Needs driver ≥ 0.1.11.5.\n"
+"Readout: peak hold ~3 s, then live · click the number to reset."
+msgstr ""
+"Sample peak van het PCM-signaal. Vereist driver ≥ 0.1.11.5.\n"
+"Uitlezing: piek-hold ~3 s, daarna live · klik op het getal om te resetten."
+
+#: phasex64-panel:1911
+msgid "PRESET"
+msgstr "PRESET"
+
+#: phasex64-panel:1923
+msgid "Choose a saved or built-in preset, then Load."
+msgstr "Kies een opgeslagen of ingebouwde preset en klik op Laden."
+
+#: phasex64-panel:1924
+msgid "LOAD"
+msgstr "LADEN"
+
+#: phasex64-panel:1926
+msgid "Apply the selected preset's codec routing and RIAA settings."
+msgstr "Past de codecroutering en RIAA-instellingen van de gekozen preset toe."
+
+#: phasex64-panel:1927
+msgid "SAVE AS…"
+msgstr "OPSLAAN ALS…"
+
+#: phasex64-panel:1929
+msgid "Save the current codec routing and RIAA settings as a new preset."
+msgstr ""
+"Slaat de huidige codecroutering en RIAA-instellingen op als nieuwe preset."
+
+#: phasex64-panel:1930
+msgid "CLOCK…"
+msgstr "KLOK…"
+
+#: phasex64-panel:1932
+msgid "Switch between the internal clock and the digital (S/PDIF) input."
+msgstr "Wisselt tussen de interne klok en de digitale (S/PDIF) ingang."
+
+#: phasex64-panel:1933
+msgid "MIDI…"
+msgstr "MIDI…"
+
+#: phasex64-panel:1935
+msgid "Open the MIDI input message monitor."
+msgstr "Opent de MIDI-ingangsberichtenmonitor."
+
+#: phasex64-panel:1939
+msgid ""
+"MIDI IN activity - lights briefly on bytes received. A running MIDI clock "
+"keeps this lit almost continuously (it's ~48 messages/second), which is "
+"expected, not a fault."
+msgstr ""
+"MIDI IN-activiteit - licht kort op bij ontvangen bytes. Een lopende MIDI-"
+"klok houdt dit bijna continu aan (het is ~48 berichten per seconde), wat "
+"normaal is, geen storing."
+
+#: phasex64-panel:1942
+msgid ""
+"MIDI OUT activity - lights briefly on bytes transmitted. Shows activity "
+"only, never message content (see the MIDI monitor window)."
+msgstr ""
+"MIDI OUT-activiteit - licht kort op bij verzonden bytes. Toont alleen "
+"activiteit, nooit berichtinhoud (zie het MIDI-monitorvenster)."
+
+#: phasex64-panel:1946
+msgid "IN"
+msgstr "IN"
+
+#: phasex64-panel:1946
+msgid "OUT"
+msgstr "UIT"
+
+#: phasex64-panel:1953
+msgid "Codec changes apply live while a stream is running."
+msgstr "Codecwijzigingen worden live toegepast terwijl een stream loopt."
+
+#: phasex64-panel:1955
+msgid ""
+"Codec changes during a stream apply at the next start · live apply comes "
+"with v0.1.12."
+msgstr ""
+"Codecwijzigingen tijdens een actieve stream gaan pas bij de volgende start "
+"in · live toepassen komt met v0.1.12."
+
+#: phasex64-panel:1979
+msgid "Clock: internal word clock, or synced to the digital (S/PDIF) input."
+msgstr ""
+"Clock: interne woordklok, of gesynchroniseerd met de digitale (S/PDIF) "
+"ingang."
+
+#: phasex64-panel:1980
+msgid "Digital: whether a digital input signal is currently locked."
+msgstr "Digital: of er nu een digitaal ingangssignaal vergrendeld is."
+
+#: phasex64-panel:1981
+msgid ""
+"Stream: whether a PCM stream (playback or capture) is running, and its rate."
+msgstr ""
+"Stream: of er een PCM-stream (afspelen of opnemen) actief is, en de "
+"samplerate."
+
+#: phasex64-panel:1982
+msgid "MIDI: input monitor window state; independent of PCM stream state."
+msgstr ""
+"MIDI: status van het invoermonitorvenster; onafhankelijk van de PCM-"
+"streamstatus."
+
+#: phasex64-panel:1993
+msgid "Applying control state…"
+msgstr "Controlstatus wordt toegepast…"
+
+#: phasex64-panel:2005
+#, python-brace-format
+msgid "Preset controls unavailable: {names}"
+msgstr "Presetcontrols niet beschikbaar: {names}"
+
+#: phasex64-panel:2012
+msgid "Save preset"
+msgstr "Preset opslaan"
+
+#: phasex64-panel:2012
+msgid "Preset name"
+msgstr "Presetnaam"
+
+#: phasex64-panel:2017
+msgid "Replace preset?"
+msgstr "Preset vervangen?"
+
+#: phasex64-panel:2021
+#, python-brace-format
+msgid "Saved {name}"
+msgstr "{name} opgeslagen"
+
+#: phasex64-panel:2031
+msgid "demo · no hardware accessed"
+msgstr "demo · geen hardware benaderd"
+
+#: phasex64-panel:2032
+#, python-brace-format
+msgid ""
+"PHASE X64 Studio control\n"
+"Panel {panel_version}\n"
+"Driver: {driver_version}\n"
+"Card: {card_status}\n"
+"\n"
+"Independent Python/Tk interface · no manufacturer artwork.\n"
+"Meters show stereo sample peaks in dBFS.\n"
+"Stream activity is derived from ALSA /proc status."
+msgstr ""
+"PHASE X64 Studio control\n"
+"Panel {panel_version}\n"
+"Driver: {driver_version}\n"
+"Kaart: {card_status}\n"
+"\n"
+"Onafhankelijke Python/Tk-interface · geen artwork van de fabrikant.\n"
+"Meters tonen stereo sample peaks in dBFS.\n"
+"Streamactiviteit wordt afgeleid van ALSA /proc-status."
+
+#: phasex64-panel:2040
+msgid "About PHASE X64"
+msgstr "Over PHASE X64"
+
+#: phasex64-panel:2046 phasex64-panel:2545
+msgid "OK"
+msgstr "OK"
+
+#: phasex64-panel:2074
+msgid "Clock control unavailable"
+msgstr "Klokcontrol niet beschikbaar"
+
+#: phasex64-panel:2078
+#, python-brace-format
+msgid ""
+"Clock source: {current}\n"
+"Digital input: {input_state}\n"
+"\n"
+"Switch clock source to {target}?"
+msgstr ""
+"Klokbron: {current}\n"
+"Digitale ingang: {input_state}\n"
+"\n"
+"Klokbron wisselen naar {target}?"
+
+#: phasex64-panel:2080 phasex64-panel:2082
+msgid "internal"
+msgstr "intern"
+
+#: phasex64-panel:2080 phasex64-panel:2082
+msgid "digital input"
+msgstr "digitale ingang"
+
+#: phasex64-panel:2081 phasex64-panel:2378
+msgid "locked"
+msgstr "lock"
+
+#: phasex64-panel:2081
+msgid "no signal"
+msgstr "geen signaal"
+
+#: phasex64-panel:2083
+msgid "Switch clock source?"
+msgstr "Klokbron wisselen?"
+
+#: phasex64-panel:2165 phasex64-panel:2171
+msgid "MIDI IN MONITOR"
+msgstr "MIDI-IN-MONITOR"
+
+#: phasex64-panel:2177
+msgid ""
+"The input monitor follows the dynamically discovered PHASE ALSA-seq port. IN/"
+"OUT activity comes only from ALSA rawmidi byte counters."
+msgstr ""
+"De ingangsmonitor volgt de dynamisch gevonden PHASE ALSA-seq-poort. IN/UIT-"
+"activiteit komt uitsluitend van ALSA-rawmidi-bytetellers."
+
+#: phasex64-panel:2203
+msgid "Show Clock / Active Sensing"
+msgstr "Clock / Active Sensing tonen"
+
+#: phasex64-panel:2208
+msgid ""
+"Off by default - a running MIDI clock alone is 48 messages/second, mostly "
+"noise for a human reading this log. Only affects new messages from now on, "
+"not history already shown."
+msgstr ""
+"Standaard uit - een lopende MIDI-klok alleen al is 48 berichten per seconde, "
+"meestal ruis voor iemand die dit logboek leest. Werkt alleen op nieuwe "
+"berichten vanaf nu, niet op de geschiedenis die al getoond wordt."
+
+#: phasex64-panel:2213
+msgid "Show system events"
+msgstr "Systeemgebeurtenissen tonen"
+
+#: phasex64-panel:2218
+msgid ""
+"Off by default - other ALSA clients connecting/disconnecting (e.g. \"Port "
+"subscribed\"), not MIDI performance data. A separate toggle from Clock/"
+"Active Sensing above: different kind of noise, different reason to want it "
+"shown."
+msgstr ""
+"Standaard uit - andere ALSA-clients die verbinden/loskoppelen (bijv. \"Port "
+"subscribed\"), geen MIDI-performancedata. Een apart schakelaartje los van "
+"Clock/Active Sensing hierboven: ander soort ruis, andere reden om het te "
+"willen zien."
+
+#: phasex64-panel:2222
+msgid "CLOSE"
+msgstr "SLUITEN"
+
+#: phasex64-panel:2224
+msgid "Close the MIDI monitor and stop its aseqdump process."
+msgstr "Sluit de MIDI-monitor en stopt het bijbehorende aseqdump-proces."
+
+#: phasex64-panel:2246
+msgid "Closing…"
+msgstr "Wordt gesloten…"
+
+#: phasex64-panel:2281
+msgid "Connected"
+msgstr "Verbonden"
+
+#: phasex64-panel:2281
+msgid "Waiting for MIDI input…"
+msgstr "Wachten op MIDI-invoer…"
+
+#: phasex64-panel:2282
+msgid "Disconnected"
+msgstr "Niet verbonden"
+
+#: phasex64-panel:2282
+msgid "PHASE MIDI port disconnected."
+msgstr "PHASE MIDI-poort niet verbonden."
+
+#: phasex64-panel:2283 phasex64-panel:2289
+msgid "Monitor unavailable"
+msgstr "Monitor niet beschikbaar"
+
+#: phasex64-panel:2284 phasex64-panel:2290
+msgid "aseqdump is unavailable or could not subscribe."
+msgstr "aseqdump is niet beschikbaar of kon zich niet abonneren."
+
+#: phasex64-panel:2285
+msgid "Demo"
+msgstr "Demo"
+
+#: phasex64-panel:2285
+msgid "MIDI monitor is offline in demo mode."
+msgstr "De MIDI-monitor is offline in demomodus."
+
+#: phasex64-panel:2286
+msgid "Resolving PHASE MIDI port…"
+msgstr "PHASE MIDI-poort wordt opgezocht…"
+
+#: phasex64-panel:2307
+msgid ""
+"OUT shows activity only (byte counter) - outgoing message content cannot be "
+"observed."
+msgstr ""
+"OUT toont alleen activiteit (bytetelling) - de inhoud van uitgaande "
+"berichten kan niet worden waargenomen."
+
+#: phasex64-panel:2311
+msgid "No audio stream is running - MIDI only flows while one is active."
+msgstr ""
+"Er loopt geen audiostream - MIDI werkt alleen terwijl er een actief is."
+
+#: phasex64-panel:2369
+msgid "demo"
+msgstr "demo"
+
+#: phasex64-panel:2370
+msgid "not connected"
+msgstr "niet verbonden"
+
+#: phasex64-panel:2371
+#, python-brace-format
+msgid "hw:{card} · PHASE X64"
+msgstr "hw:{card} · PHASE X64"
+
+#: phasex64-panel:2377
+msgid "Internal"
+msgstr "Intern"
+
+#: phasex64-panel:2377
+msgid "Digital"
+msgstr "Digitaal"
+
+#: phasex64-panel:2378
+msgid "unlocked"
+msgstr "geen lock"
+
+#: phasex64-panel:2383
+#, python-brace-format
+msgid "running {rate}"
+msgstr "actief, {rate}"
+
+#: phasex64-panel:2383
+msgid "running"
+msgstr "actief"
+
+#: phasex64-panel:2385
+msgid "idle"
+msgstr "inactief"
+
+#: phasex64-panel:2387 phasex64-panel:2407
+msgid "unknown"
+msgstr "onbekend"
+
+#: phasex64-panel:2405
+msgid "available"
+msgstr "beschikbaar"
+
+#: phasex64-panel:2406
+msgid "unavailable"
+msgstr "niet beschikbaar"
+
+#: phasex64-panel:2409
+#, python-brace-format
+msgid ""
+"● {status}    |    Clock: {clock}    |    Digital: {lock}    |    Stream: "
+"{stream}    |    MIDI: {midi}"
+msgstr ""
+"● {status}    |    Klok: {clock}    |    Digitaal: {lock}    |    Stream: "
+"{stream}    |    MIDI: {midi}"
+
+#: phasex64-panel:2458
+#, python-brace-format
+msgid "Apply failed (some controls may have changed): {error}"
+msgstr ""
+"Toepassen mislukt (sommige controls zijn mogelijk al gewijzigd): {error}"
+
+#: phasex64-panel:2460
+msgid "Applied live."
+msgstr "Live toegepast."
+
+#: phasex64-panel:2462
+msgid ""
+"Control state written · restart an active stream to apply codec routing."
+msgstr ""
+"Controlstatus geschreven · herstart een actieve stream om de codecroutering "
+"toe te passen."
+
+#: phasex64-panel:2542
+msgid "PHASE X64 panel is already running"
+msgstr "PHASE X64-paneel draait al"
+
+#~ msgid "Microphone, guitar (Hi-Z) or line level."
+#~ msgstr "Microfoon, gitaar (Hi-Z) of lijnniveau."
+
+#~ msgid "connected"
+#~ msgstr "verbonden"
+
+#~ msgid "disconnected"
+#~ msgstr "niet verbonden"
+
+#~ msgid "closed"
+#~ msgstr "gesloten"
+
+#~ msgid "MIDI: MIDI in/out only works while a stream is running."
+#~ msgstr "MIDI: MIDI in/uit werkt alleen zolang er een stream actief is."
+
+#~ msgid "active"
+#~ msgstr "actief"
+
+#~ msgid "inactive"
+#~ msgstr "inactief"
+
+#~ msgid "Records what the other pair outputs."
+#~ msgstr "Neemt op wat het andere paar uitstuurt."
+
+#~ msgid "inactive (needs a stream)"
+#~ msgstr "inactief (vereist een stream)"
