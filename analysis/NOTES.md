@@ -1650,3 +1650,49 @@ for the driver or panel to control or fix here. Documented in the README
 (user-facing) and the panel's `ITEM_TOOLTIPS`/`direct_mono_tooltip` (the
 L/R mapping and Direct Mono's sum behaviour, since those are relevant to
 routing decisions the panel does make).
+
+## PipeWire buffer size (quantum) - hardware results and panel control (2026-10-21)
+
+User-tested on hardware, REAPER via `pipewire-jack`, playback and
+recording at the same time:
+
+| Quantum | Result | Notes |
+|---|---|---|
+| 1024, 256 | stable | earlier sessions (see "PipeWire / JACK" in the README) |
+| 128 | stable | |
+| 64 | stable | `pw-top` W/Q ≈ 0.07 |
+| 512, 2048 | not tested | within the tested range |
+| < 64 | not offered by the panel | |
+
+- `pw-top`'s ERR counter rose by only 1-2 at each live switch, never
+  while running - a live change can cost one short click.
+- `pw-metadata -n settings 0 clock.force-quantum N` applies live during
+  playback; REAPER's title bar only shows the new value after a
+  stop/start.
+- Analog loopback (Out 3/4 into Aux In 3/4) at 64: the recording needed
+  about 54 samples (≈1.1 ms) of extra alignment beyond REAPER's reported
+  compensation. First measurement, approximate - to be confirmed.
+
+**How the panel reads it** (investigated on PipeWire 1.6.9, no new
+dependencies - both tools ship in the `pipewire` package):
+- Forced value: `pw-metadata -n settings`, key `clock.force-quantum`
+  (0 = not forced). ~5 ms per call; exits 255 ("can't connect") without
+  a PipeWire server, which is the "unavailable" signal.
+- Running value in Auto mode: `pw-dump` doesn't expose it (only the
+  configured defaults, limits and per-node latency ranges); `pw-top -b
+  -n 2` does, through PipeWire's profiler - the driver lines of the
+  second sample block (the first is always zeros), run with `LC_ALL=C`
+  because the table otherwise uses the locale's decimal comma. It's a
+  human-oriented table, so the panel parses it defensively (header
+  check, driver lines only, PHASE X64's own driver preferred) and shows
+  nothing rather than a guess when the layout doesn't match; a failed
+  or timed-out call backs off for 10 s, since the call shares the
+  panel's worker with the 50 ms meter poll.
+- `clock.quantum` in the settings metadata is the configured default,
+  not the running value - not used for display.
+
+"Keep after restart" writes only
+`~/.config/pipewire/pipewire.conf.d/20-phasex64-buffer.conf`
+(`default.clock.quantum`, plus `default.clock.min-quantum` when the
+current minimum is above the chosen size). That's a default, not a
+forced value: an application may still request a larger quantum.

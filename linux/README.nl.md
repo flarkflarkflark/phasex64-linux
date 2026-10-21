@@ -70,8 +70,10 @@ phasex64-panel
 Zonder skin (`phasex64-panel --plain`) krijg je gewone knoppen met dezelfde
 functies. Alle knoppen zijn ook gewone ALSA-controls
 (`alsamixer -c PhaseX64`) en worden met `alsactl store` bewaard. De
-latency-knoppen van Windows bestaan hier niet: de buffergrootte stel je in
-PipeWire, JACK of je DAW in.
+latency-knoppen van Windows zijn vervangen door de BUFFER-regeling van
+het configuratiescherm, die de buffergrootte van PipeWire instelt (zie
+"Buffergrootte en latentie"); stel bij JACK2 of directe ALSA-toegang de
+buffer daar of in je DAW in.
 
 De panel-UI is meertalig via gettext en volgt de systeemtaal
 (`LANG`/`LC_MESSAGES`/`LC_ALL`, die bijvoorbeeld Plasma instelt). Zie
@@ -305,7 +307,9 @@ op JACK; pipewire-jack koppelt dat aan dezelfde PipeWire-graaf als al
 het andere. Latency/quantum is een **graafbrede** PipeWire-instelling,
 niet specifiek voor dit apparaat - stel die in met
 `pw-metadata -n settings 0 clock.force-quantum <256|1024|0>` (`0` wist
-de override) in plaats van dit bestand aan te passen. **Bevestigd**
+de override) of de BUFFER-regeling van het configuratiescherm (zie
+"Buffergrootte en latentie" hieronder) in plaats van dit bestand aan te
+passen. **Bevestigd**
 (2026-10-19): REAPER via `pipewire-jack` bij quantum 1024 en 256,
 6-kanaals/4-kanaals, continu opnemen van vinyl op In 1/2, desktopaudio
 ernaast blijft werken, geen hapering.
@@ -354,6 +358,59 @@ Sla die laatste stap over als je `pro-audio` wilt blijven gebruiken
 zonder de rest van deze configuratie (suspend, rate/formaat-pinning) -
 het profiel en dit bestand staan los van elkaar, en dat is precies
 waarom het bestand alleen verwijderen het profiel niet terugdraait.
+
+## Buffergrootte en latentie
+
+PipeWire verwerkt audio in blokken van een vast aantal samples, het
+*quantum*. Dat is één instelling voor de hele PipeWire-graaf, niet per
+apparaat: kleiner betekent minder latentie en meer CPU-belasting. Eén
+blok duurt quantum / samplerate - 64 samples bij 48 kHz is 1,3 ms, 1024
+is 21,3 ms. Dat is één periode; de totale rondgang door de interface is
+langer.
+
+**In het configuratiescherm**: BUFFER, naast de presets, biedt Auto en
+64 tot 2048. Een wijziging wordt live toegepast, en het label ernaast
+toont de bloklengte bij de huidige samplerate; bij Auto toont het de
+grootte waarmee PipeWire werkelijk draait, als die te lezen is. De
+regeling vereist een draaiende PipeWire. Stel bij JACK2 de buffer in
+JACK in; bij directe ALSA-toegang kiest de applicatie hem zelf.
+
+**Bewaren na herstart** schrijft daarnaast
+`~/.config/pipewire/pipewire.conf.d/20-phasex64-buffer.conf`, waarmee de
+grootte de *standaard* van PipeWire wordt voor nieuwe sessies na een
+herstart van PipeWire (zo nodig wordt ook `default.clock.min-quantum`
+verlaagd; andere configuratiebestanden worden nooit aangeraakt; het
+vinkje weghalen verwijdert het bestand). Omdat het een standaard is en
+geen afgedwongen waarde, kan een applicatie PipeWire nog steeds om een
+grotere buffer vragen.
+
+**Zonder het configuratiescherm**:
+
+```sh
+pw-metadata -n settings 0 clock.force-quantum 128   # live, tot PipeWire herstart
+pw-metadata -n settings 0 clock.force-quantum 0     # terug naar Auto
+PIPEWIRE_QUANTUM=128/48000 reaper                   # alleen voor één applicatie
+```
+
+of een eigen drop-in-bestand in `~/.config/pipewire/pipewire.conf.d/`
+met `context.properties = { default.clock.quantum = 128 }`, gevolgd door
+`systemctl --user restart pipewire pipewire-pulse wireplumber`.
+
+**Getest** (2026-10-21, REAPER via `pipewire-jack`, tegelijk afspelen en
+opnemen): 64, 128, 256 en 1024 draaien stabiel. Een live wijziging kan
+een korte klik geven - de ERR-teller van `pw-top` steeg met 1-2 bij elke
+wissel, niet tijdens het draaien; bij 64 gebruikte de graaf ongeveer 7%
+van zijn tijdbudget (W/Q ≈ 0,07). 512 en 2048 zijn niet getest maar
+liggen binnen dat bereik; groottes onder 64 worden niet aangeboden. De
+titelbalk van REAPER toont een nieuwe grootte pas nadat het afspelen is
+gestopt en opnieuw gestart.
+
+**Opname-offset in REAPER**: bij 64 kwam een analoge loopback-opname
+(Out 3/4 naar Aux In 3/4) ongeveer 54 samples (≈1,1 ms) later binnen
+dan REAPER's eigen latentiecompensatie verrekent. Dat is een eerste,
+benaderende meting. Neem voor sample-nauwkeurige overdubs één keer een
+korte loopback op, meet het verschil en vul dat in als REAPER's
+handmatige opname-offset (Preferences → Audio → Recording).
 
 ## Indeling opnamekanalen
 

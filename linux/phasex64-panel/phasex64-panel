@@ -721,6 +721,220 @@ class FakeMidiMonitor:
         self.stop()
 
 
+# PipeWire buffer size ("quantum", in samples). 0 = Auto (no forced value).
+# Values below 64 are deliberately not offered.
+BUFFER_CHOICES = (0, 64, 128, 256, 512, 1024, 2048)
+BUFFER_FALLBACK_RATE = 48000
+BUFFER_CONF_NAME = "20-phasex64-buffer.conf"
+# Fixed label width (so the row doesn't shift as the value changes): fits the
+# longest text, "auto: 2048 · 46.4 ms" (44.1 kHz).
+BUFFER_LABEL_CHARS = 20
+PW_METADATA_TIMEOUT = 2.0
+# pw-top is the only source of the *running* quantum (its profiler view);
+# bound it tightly and back off after a failure, since it shares the
+# PanelIO worker with the 50ms meter poll.
+PW_TOP_TIMEOUT = 1.0
+PW_TOP_BACKOFF = 10.0
+_PW_SETTING_RE = re.compile(r"^update: id:0 key:'([^']*)' value:'([^']*)'")
+_BUFFER_CONF_RE = re.compile(r"^\s*default\.clock\.quantum\s*=\s*(\d+)\s*$", re.M)
+
+
+def _to_int(text, default=None):
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_pw_settings(text):
+    """`pw-metadata -n settings` output -> {key: value} for subject id 0."""
+    settings = {}
+    for line in text.splitlines():
+        match = _PW_SETTING_RE.match(line.strip())
+        if match:
+            settings[match.group(1)] = match.group(2)
+    return settings
+
+
+def parse_pw_top_quantum(text):
+    """(quantum, rate) of the running graph from `pw-top -b -n 2` output,
+    or None. Uses the last sample block (the first one is always zeros),
+    driver lines only (followers are marked " + "), preferring the PHASE
+    X64's own driver node. Any unexpected layout -> None, never a guess.
+    """
+    blocks, current = [], None
+    for line in text.splitlines():
+        tokens = line.split()
+        if tokens[:4] == ["S", "ID", "QUANT", "RATE"]:
+            current = []
+            blocks.append(current)
+        elif current is not None and tokens:
+            current.append(line)
+    if not blocks:
+        return None
+    candidates = []
+    for line in blocks[-1]:
+        tokens = line.split()
+        if len(tokens) < 10 or re.search(r"\s\+\s", line):
+            continue
+        quantum, rate = _to_int(tokens[2]), _to_int(tokens[3])
+        if quantum and rate:
+            candidates.append(("phase_x64" in line.lower(), quantum, rate))
+    if not candidates:
+        return None
+    _phase, quantum, rate = max(candidates, key=lambda c: c[0])
+    return quantum, rate
+
+
+def format_buffer_latency(quantum, rate):
+    """"64 · 1.3 ms" - one period at `rate` (48 kHz if unknown)."""
+    rate = rate or BUFFER_FALLBACK_RATE
+    return "{quantum} · {ms:.1f} ms".format(quantum=quantum, ms=quantum * 1000 / rate)
+
+
+def buffer_conf_text(quantum, min_quantum=None):
+    """pipewire.conf.d drop-in making `quantum` PipeWire's default; also
+    lowers default.clock.min-quantum when it would otherwise be above it.
+    """
+    lines = [
+        "# Written by phasex64-panel (\"Keep after restart\"). Untick the option",
+        "# in the panel, or delete this file, to go back to PipeWire's default.",
+        "context.properties = {",
+        f"    default.clock.quantum = {quantum}",
+    ]
+    if min_quantum is not None and min_quantum > quantum:
+        lines.append(f"    default.clock.min-quantum = {quantum}")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+class PipeWireBuffer:
+    """Reads and sets PipeWire's graph quantum through pw-metadata/pw-top.
+    Every method may block on a subprocess: call them from PanelIO's
+    worker, never from the Tk thread.
+    """
+
+    def __init__(self, conf_dir=None):
+        self.conf_dir = Path(conf_dir) if conf_dir else Path(
+            os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))) / "pipewire" / "pipewire.conf.d"
+        self._top_retry_at = 0.0
+
+    @property
+    def conf_path(self):
+        return self.conf_dir / BUFFER_CONF_NAME
+
+    @staticmethod
+    def _run(args, timeout):
+        tool = shutil.which(args[0])
+        if tool is None:
+            return None
+        try:
+            return subprocess.run([tool] + list(args[1:]), capture_output=True, text=True,
+                                  timeout=timeout, env=dict(os.environ, LC_ALL="C"))
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+    def running_quantum(self):
+        if time.monotonic() < self._top_retry_at:
+            return None
+        result = self._run(["pw-top", "-b", "-n", "2"], PW_TOP_TIMEOUT)
+        if result is None or result.returncode != 0:
+            self._top_retry_at = time.monotonic() + PW_TOP_BACKOFF
+            return None
+        return parse_pw_top_quantum(result.stdout)
+
+    def persisted(self):
+        try:
+            text = self.conf_path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        match = _BUFFER_CONF_RE.search(text)
+        return int(match.group(1)) if match else None
+
+    def state(self):
+        result = self._run(["pw-metadata", "-n", "settings"], PW_METADATA_TIMEOUT)
+        settings = parse_pw_settings(result.stdout) if result is not None and result.returncode == 0 else {}
+        if "clock.force-quantum" not in settings:
+            return {"available": False, "persisted": self.persisted()}
+        forced = _to_int(settings.get("clock.force-quantum"), 0)
+        return {
+            "available": True,
+            "forced": forced,
+            "running": self.running_quantum() if forced == 0 else None,
+            "rate": _to_int(settings.get("clock.rate")),
+            "min": _to_int(settings.get("clock.min-quantum")),
+            "persisted": self.persisted(),
+        }
+
+    @staticmethod
+    def apply_command(quantum):
+        if quantum not in BUFFER_CHOICES:
+            raise ValueError(_("Unsupported buffer size: {size}").format(size=quantum))
+        return ["pw-metadata", "-n", "settings", "0", "clock.force-quantum", str(quantum)]
+
+    def apply(self, quantum):
+        result = self._run(self.apply_command(quantum), PW_METADATA_TIMEOUT)
+        if result is None:
+            raise RuntimeError(_("pw-metadata is not available"))
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "pw-metadata exit {code}".format(code=result.returncode))
+        return quantum
+
+    def persist(self, quantum, min_quantum=None):
+        """Write the drop-in for `quantum`, or remove it for None/0 (Auto).
+        Only ever touches this panel's own file."""
+        path = self.conf_path
+        if not quantum:
+            path.unlink(missing_ok=True)
+            return None
+        if quantum not in BUFFER_CHOICES:
+            raise ValueError(_("Unsupported buffer size: {size}").format(size=quantum))
+        self.conf_dir.mkdir(parents=True, exist_ok=True)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.conf_dir,
+                                             prefix=".phasex64-buffer-", delete=False) as stream:
+                temporary = Path(stream.name)
+                stream.write(buffer_conf_text(quantum, min_quantum))
+            os.replace(temporary, path)
+            temporary = None
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        return quantum
+
+
+class FakePipeWireBuffer:
+    """In-memory counterpart for --demo/--fake-mixer and GUI tests: never
+    runs pw-metadata, so a demo can't change the real PipeWire graph."""
+
+    def __init__(self, available=True):
+        self.available = available
+        self.forced = 0
+        self.running = (1024, 48000)
+        self.rate = 48000
+        self.min = 32
+        self.kept = None
+        self.applied = []
+
+    def state(self):
+        if not self.available:
+            return {"available": False, "persisted": self.kept}
+        return {"available": True, "forced": self.forced,
+                "running": self.running if self.forced == 0 else None,
+                "rate": self.rate, "min": self.min, "persisted": self.kept}
+
+    def apply(self, quantum):
+        PipeWireBuffer.apply_command(quantum)
+        self.forced = quantum
+        self.applied.append(quantum)
+        return quantum
+
+    def persist(self, quantum, min_quantum=None):
+        self.kept = quantum or None
+        return self.kept
+
+
 class Mixer:
     def __init__(self, card):
         self.card = card
@@ -731,6 +945,7 @@ class Mixer:
         self._monitor_proc = None
         self._monitor_thread = None
         self.midi_monitor = MidiMonitor()
+        self.buffer = PipeWireBuffer()
 
     def contents(self):
         if self.card is None:
@@ -978,6 +1193,7 @@ class FakeMixer:
         self.available = set(self.values) | (set(PEAK_NAMES) if demo else set())
         self.midi_rx = self.midi_tx = 0
         self.midi_monitor = FakeMidiMonitor()
+        self.buffer = FakePipeWireBuffer()
         if demo:
             self.values["In 1/2 Capture Source"] = "1"
 
@@ -1216,6 +1432,13 @@ class PanelIO:
                     elif kind == "midi_stop":
                         self.mixer.midi_monitor.stop()
                         result = self.mixer.midi_monitor.status()
+                    elif kind == "buffer_state":
+                        result = self.mixer.buffer.state()
+                    elif kind == "buffer_set":
+                        result = self.mixer.buffer.apply(payload)
+                    elif kind == "buffer_keep":
+                        quantum, min_quantum, announce = payload
+                        result = (self.mixer.buffer.persist(quantum, min_quantum), announce)
                     elif kind == "peaks":
                         # No catch-up bursts after a slow state read or write.
                         if self.stop.wait(max(0, .05 - (time.monotonic() - self.last_peak))):
@@ -1530,6 +1753,16 @@ class Panel:
         # driver enforces or could remove. None until the first "state"
         # poll result arrives.
         self.pcm_active = None
+        self.stream_rate = None
+        # PipeWire buffer size: last polled state (dict from
+        # PipeWireBuffer.state(), None until the first poll), and whether
+        # a user change is in flight - while it is, polled values must not
+        # overwrite the dropdown the user just changed.
+        self.buffer_state = None
+        self.buffer_busy = False
+        self.pending_buffer_state = False
+        self.next_buffer_state = 0.0
+        self.buffer_choice = None
         self.presets = Presets()
         self.preset_ids = []
         self.closed = False
@@ -1546,6 +1779,7 @@ class Panel:
         root.configure(bg=BG)
         root.option_add("*Font", "{DejaVu Sans} 10")
         root.protocol("WM_DELETE_WINDOW", self.close)
+        self.skinned = bool(skin)
         if skin:
             root.resizable(False, False)
             self.build_skin(skin)
@@ -1906,6 +2140,134 @@ class Panel:
         elif self.preset_choice.current() < 0 and self.preset_ids:
             self.preset_choice.current(0)
 
+    # -- PipeWire buffer size -----------------------------------------------
+
+    def buffer_choice_label(self, quantum):
+        return _("Auto") if quantum == 0 else str(quantum)
+
+    def build_buffer_controls(self, parent):
+        frame = tk.Frame(parent, bg=BG)
+        frame.pack(side="left", padx=(0 if self.skinned else 24, 0))
+        tk.Label(frame, text=_("BUFFER"), bg=BG, fg=DIM_TEXT,
+                 font=("DejaVu Sans", 9, "bold")).pack(side="left", padx=(0, 8))
+        self.buffer_choice = ttk.Combobox(
+            frame, state="disabled", style="Studio.TCombobox", width=6,
+            values=[self.buffer_choice_label(q) for q in BUFFER_CHOICES])
+        self.buffer_choice.set(self.buffer_choice_label(0))
+        self.buffer_choice.pack(side="left")
+        self.buffer_choice.bind("<<ComboboxSelected>>", self.on_buffer_selected)
+        Tooltip(self.buffer_choice, self.buffer_tooltip)
+        self.buffer_label = tk.Label(frame, text="—", bg=BG, fg=DIM_TEXT, anchor="w",
+                                     font=("DejaVu Sans Mono", 9), width=BUFFER_LABEL_CHARS)
+        self.buffer_label.pack(side="left", padx=(8, 0))
+        Tooltip(self.buffer_label, _("One buffer period at the current sample rate. The total "
+                                     "round-trip latency through the interface is higher."))
+        self.buffer_keep_var = tk.BooleanVar(value=False)
+        self.buffer_keep = tk.Checkbutton(
+            frame, text=_("Keep after restart"), variable=self.buffer_keep_var,
+            command=self.on_buffer_keep, state="disabled", bg=BG, fg=TEXT,
+            selectcolor=CARD, activebackground=BG, activeforeground=ACCENT,
+            disabledforeground=DIM, highlightthickness=0, bd=0)
+        self.buffer_keep.pack(side="left", padx=(4, 0))
+        Tooltip(self.buffer_keep, _(
+            "Also make this size PipeWire's default, in "
+            "~/.config/pipewire/pipewire.conf.d/20-phasex64-buffer.conf. Takes effect "
+            "for new sessions after a PipeWire restart; the size chosen here is "
+            "applied immediately anyway. Untick to remove that file."))
+
+    def buffer_available(self):
+        return bool(self.buffer_state and self.buffer_state.get("available"))
+
+    def buffer_tooltip(self):
+        if self.buffer_state is not None and not self.buffer_available():
+            return _("Requires PipeWire. With JACK2 set the buffer in JACK; with plain "
+                     "ALSA the application chooses it.")
+        return _("PipeWire buffer size (quantum) in samples, applied live to the whole "
+                 "PipeWire graph. Smaller means less latency and more CPU load. Stable "
+                 "on hardware: 64, 128, 256 and 1024; 512 and 2048 untested but within "
+                 "that range. A live change can cause a short click. Auto lets "
+                 "PipeWire decide.")
+
+    def selected_buffer(self):
+        text = self.buffer_choice.get()
+        for quantum in BUFFER_CHOICES:
+            if text == self.buffer_choice_label(quantum):
+                return quantum
+        return None
+
+    def render_buffer_state(self, state):
+        self.buffer_state = state
+        if self.buffer_choice is None:
+            return
+        available = self.buffer_available()
+        self.buffer_choice.configure(state="readonly" if available else "disabled")
+        self.buffer_keep.configure(state="normal" if available else "disabled")
+        self.buffer_keep_var.set(bool(state.get("persisted")))
+        if not available:
+            self.buffer_label.configure(text="—")
+            return
+        if self.buffer_busy:
+            return
+        forced = state.get("forced", 0)
+        self.buffer_choice.set(self.buffer_choice_label(forced))
+        if forced:
+            text = format_buffer_latency(forced, self.stream_rate or state.get("rate"))
+        elif state.get("running"):
+            quantum, rate = state["running"]
+            text = _("auto: {latency}").format(latency=format_buffer_latency(quantum, rate))
+        else:
+            text = _("auto")
+        self.buffer_label.configure(text=text)
+
+    def on_buffer_selected(self, _event=None):
+        quantum = self.selected_buffer()
+        if quantum is None or not self.buffer_available():
+            return
+        self.buffer_busy = True
+        self.io.submit("buffer_set", quantum)
+        if self.buffer_keep_var.get():
+            # Keep the drop-in in step with the new size; the "Buffer set"
+            # notice is the one worth showing here, so this one stays quiet.
+            self.io.submit("buffer_keep", (quantum, self.buffer_state.get("min"), False))
+
+    def on_buffer_keep(self):
+        if not self.buffer_available():
+            return
+        quantum = self.selected_buffer() if self.buffer_keep_var.get() else None
+        if self.buffer_keep_var.get() and not quantum:
+            self.buffer_keep_var.set(False)
+            self.notice.configure(text=_("Choose a buffer size first; Auto is already "
+                                         "PipeWire's default."), fg=MUTED)
+            return
+        self.buffer_busy = True
+        self.io.submit("buffer_keep", (quantum, self.buffer_state.get("min"), True))
+
+    def handle_buffer_result(self, kind, result, error):
+        if kind == "buffer_state":
+            self.pending_buffer_state = False
+            self.render_buffer_state({"available": False} if error else result)
+            return
+        self.buffer_busy = False
+        self.next_buffer_state = 0
+        if error:
+            self.notice.configure(text=_("Buffer change failed: {error}").format(error=error), fg=RED)
+        elif kind == "buffer_set":
+            if result:
+                text = _("Buffer set: {latency}.").format(
+                    latency=format_buffer_latency(result, self.stream_rate or
+                                                  (self.buffer_state or {}).get("rate")))
+            else:
+                text = _("Buffer set: Auto (PipeWire decides).")
+            self.notice.configure(text=text, fg=ACCENT)
+        elif not result[1]:
+            return
+        elif result[0]:
+            self.notice.configure(text=_("Kept after restart: buffer {size} becomes PipeWire's "
+                                         "default after the next PipeWire restart.").format(size=result[0]),
+                                  fg=ACCENT)
+        else:
+            self.notice.configure(text=_("No longer kept after restart."), fg=ACCENT)
+
     def build_footer(self):
         presets = tk.Frame(self.root, bg=BG, padx=22, pady=16)
         presets.pack(fill="x")
@@ -1928,6 +2290,14 @@ class Panel:
         self.save_button = self.button(presets, _("SAVE AS…"), self.save_preset)
         self.save_button.pack(side="left")
         Tooltip(self.save_button, _("Save the current codec routing and RIAA settings as a new preset."))
+        if self.skinned:
+            # The skin fixes the window width at its bitmap's; a second row
+            # keeps the buffer controls from widening it.
+            buffer_row = tk.Frame(self.root, bg=BG, padx=22)
+            buffer_row.pack(fill="x", after=presets, pady=(0, 8))
+            self.build_buffer_controls(buffer_row)
+        else:
+            self.build_buffer_controls(presets)
         clock_btn = self.button(presets, _("CLOCK…"), self.info)
         clock_btn.pack(side="right")
         Tooltip(clock_btn, _("Switch between the internal clock and the digital (S/PDIF) input."))
@@ -2367,6 +2737,7 @@ class Panel:
         # slow ~1s one (LED hold needs sub-second resolution to look
         # right; MIDI device availability below doesn't).
         self.values, rate, active, card, midi_available = result
+        self.stream_rate = rate if active else None
         self.card_status = (_("demo") if isinstance(self.mixer, FakeMixer) else
                             _("not connected") if card is None else
                             _("hw:{card} · PHASE X64").format(card=card))
@@ -2468,6 +2839,8 @@ class Panel:
                     self.render_midi_monitor("unavailable" if error else result)
             elif kind == "midi_stop":
                 self._finish_midi_monitor_close()
+            elif kind in ("buffer_state", "buffer_set", "buffer_keep"):
+                self.handle_buffer_result(kind, result, error)
         if self.io.changed.is_set():
             self.io.changed.clear()
             self.next_state = 0
@@ -2490,6 +2863,11 @@ class Panel:
                 self.pending_state = True
                 self.next_state = now + 1
                 self.io.submit("state")
+            if self.buffer_choice is not None and not self.pending_buffer_state and \
+                    now >= self.next_buffer_state:
+                self.pending_buffer_state = True
+                self.next_buffer_state = now + 1
+                self.io.submit("buffer_state")
             if not self.pending_peaks and now >= self.next_peak:
                 self.pending_peaks = True
                 self.next_peak = now + .05

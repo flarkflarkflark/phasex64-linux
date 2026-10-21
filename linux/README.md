@@ -69,8 +69,9 @@ phasex64-panel
 Without a skin (`phasex64-panel --plain`) you get plain buttons with the
 same functions. Every button is also a regular ALSA control
 (`alsamixer -c PhaseX64`) and is saved with `alsactl store`. Windows'
-latency buttons don't exist here: set the buffer size in PipeWire, JACK or
-your DAW instead.
+latency buttons are replaced by the panel's BUFFER control, which sets
+PipeWire's buffer size (see "Buffer size and latency"); with JACK2 or
+direct ALSA access, set the buffer there or in your DAW.
 
 The panel UI is multilingual via gettext; it follows the system locale
 (`LANG`/`LC_MESSAGES`/`LC_ALL`, which desktop environments such as Plasma
@@ -292,7 +293,8 @@ at JACK; pipewire-jack bridges it into the same PipeWire graph as
 everything else. Latency/quantum is a **graph-wide** PipeWire setting,
 not specific to this device - set it with
 `pw-metadata -n settings 0 clock.force-quantum <256|1024|0>` (`0`
-clears the override) rather than editing this file. **Confirmed**
+clears the override) or the panel's BUFFER control (see "Buffer size
+and latency" below) rather than editing this file. **Confirmed**
 (2026-10-19): REAPER via `pipewire-jack` at quantum 1024 and 256,
 6ch/4ch, recording vinyl on In 1/2 continuously, desktop audio alongside
 still working, no glitches.
@@ -339,6 +341,57 @@ you want to keep using `pro-audio` without the rest of this config
 (suspend, rate/format pins) - the profile and this file are
 independent, which is exactly why removing the file alone doesn't
 revert it.
+
+## Buffer size and latency
+
+PipeWire processes audio in blocks of a fixed number of samples, the
+*quantum*. It is one setting for the whole PipeWire graph, not per
+device: smaller means less latency and more CPU load. One block lasts
+quantum / sample rate - 64 samples at 48 kHz is 1.3 ms, 1024 is 21.3 ms.
+That is one period; the total round trip through the interface is
+longer.
+
+**In the panel**: BUFFER, next to the presets, offers Auto and 64 to
+2048. A change applies live, and the label next to it shows the block
+length at the current rate; in Auto it shows the size PipeWire is
+actually running, when that can be read. The control needs a running
+PipeWire. With JACK2, set the buffer in JACK; with direct ALSA access
+the application chooses it.
+
+**Keep after restart** also writes
+`~/.config/pipewire/pipewire.conf.d/20-phasex64-buffer.conf`, which
+makes the size PipeWire's *default* for new sessions after a PipeWire
+restart (it lowers `default.clock.min-quantum` too if needed, and
+never touches any other config file; unticking removes it). As a
+default rather than a forced value, an application can still ask
+PipeWire for a larger buffer.
+
+**Without the panel**:
+
+```sh
+pw-metadata -n settings 0 clock.force-quantum 128   # live, until PipeWire restarts
+pw-metadata -n settings 0 clock.force-quantum 0     # back to Auto
+PIPEWIRE_QUANTUM=128/48000 reaper                   # one application only
+```
+
+or a drop-in file of your own in `~/.config/pipewire/pipewire.conf.d/`
+containing `context.properties = { default.clock.quantum = 128 }`,
+followed by `systemctl --user restart pipewire pipewire-pulse wireplumber`.
+
+**Tested** (2026-10-21, REAPER via `pipewire-jack`, playback and
+recording at the same time): 64, 128, 256 and 1024 run stable. A live
+change can cause a short click - `pw-top`'s ERR counter rose by 1-2 at
+each switch, not while running; at 64 the graph used about 7% of its
+time budget (W/Q ≈ 0.07). 512 and 2048 weren't tested but lie within
+that range; sizes below 64 aren't offered. REAPER's title bar shows a
+new size only after playback is stopped and started again.
+
+**Recording offset in REAPER**: at 64, an analog loopback recording
+(Out 3/4 into Aux In 3/4) came back about 54 samples (≈1.1 ms) later
+than REAPER's own latency compensation accounts for. That is a first,
+approximate measurement. For sample-accurate overdubs, record a short
+loopback once, measure the difference, and enter it as REAPER's manual
+recording offset (Preferences → Audio → Recording).
 
 ## Capture channel layout
 
