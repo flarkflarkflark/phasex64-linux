@@ -26,7 +26,17 @@ eerdere driverversies.
 | Mixer | alle knoppen van het Windows-paneel, plus "Clock Source" en "Digital Input Lock" |
 
 Afspelen en opnemen draaien altijd op dezelfde samplerate (één klok in het
-apparaat).
+apparaat). **Geteste samplerates:** 48 kHz is de samplerate van dagelijks gebruik
+en van de functietests sinds driver v0.1.10 (live wijzigingen, MIDI,
+PipeWire/REAPER, buffergroottes). 44,1, 88,2 en 96 kHz zijn één
+keer op hardware getest, met v0.1.10 op 2026-10-14 (direct via ALSA,
+zonder PipeWire): per samplerate 12 s afspelen en opnemen met een toon van
+1 kHz via een analoge loopback, realtime, zonder fouten, plus wisselen van
+samplerate zonder opnieuw in te pluggen (`tests/hw/REPORT.md`,
+"Acceptance tests (2026-10-14...)"); 44,1 kHz ook in de
+bit-exactheidstest van opnamekanalen 5/6
+(`../analysis/loopback-and-monitoring.md`). Ze zijn niet opnieuw getest met
+de latere functies of via PipeWire.
 
 MIDI werkt alleen zolang er een audiostream (afspelen of opnemen) actief is
 - bijvoorbeeld met REAPER open en een lopende stream, of `arecord`/`aplay`

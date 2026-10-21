@@ -43,8 +43,17 @@ What works:
 - PipeWire, and JACK applications via `pipewire-jack`; bit-exact
   through PipeWire when the card's sink and source volume are at 100 %.
 - Buffer sizes down to 64 samples (1.3 ms at 48 kHz).
-- Sample rates 44.1, 48, 88.2 and 96 kHz (playback and capture always
-  share one rate).
+- Sample rates (playback and capture always share one rate):
+  - **48 kHz** - daily use, and the rate of the feature tests since
+    driver v0.1.10 (live changes, MIDI, PipeWire/REAPER, buffer sizes).
+  - **44.1, 88.2 and 96 kHz** - supported, and tested on hardware once,
+    with driver v0.1.10 on 2026-10-14 (direct ALSA, no PipeWire): 12 s
+    of playback and capture at once, a 1 kHz tone through an analog
+    loopback, at each rate - real time, the rate read back from the
+    device matched, no errors - plus switching 48 → 44.1 → 96 → 48 kHz
+    without replugging. 44.1 kHz was also used for the capture 5/6
+    bit-exactness test (2026-10-16). Not re-tested since then, and not
+    through PipeWire or REAPER.
 - Clock source: internal, or locked to the S/PDIF input.
 
 Tested environment: Arch Linux, kernel 7.2.x, PipeWire 1.6.x,
@@ -92,12 +101,13 @@ Inside, as seen from the driver: a Ploytec USB controller (USB ID
 
 Connections on the unit used for this project:
 
-- **Front:** Ch.1 combo socket (XLR + 6.3 mm jack) with gain knob, +48 V
-  and clip LEDs; Ch.2 Hi-Z/Line jack with gain knob and clip LED;
-  headphone jack with volume knob.
+- **Front:** phono/aux RCA inputs for Ch.1/2 and Ch.3/4; Ch.1 mic combo
+  socket (XLR + 6.3 mm jack) with Mic/Line gain knob, +48 V and clip
+  LEDs; Ch.2 Hi-Z/Line jack with gain knob and clip LED; headphone jack
+  with volume knob.
 - **Rear:** power (9 V DC), USB-B, MIDI out/in, S/PDIF (coaxial) out/in,
-  Out 3/4 (RCA), inserts for Ch.1 and Ch.2, Out 1/2 (6.3 mm jacks),
-  phono/aux RCA inputs for Ch.1/2 and Ch.3/4.
+  Out 3/4 (RCA), inserts for Ch.1 (Mic/Line) and Ch.2 (Hi-Z/Line),
+  Out 1/2 (6.3 mm jacks).
 - **Side switches:** 48 V on/off, Ch.1 Line/Mic, Ch.2 Line/Hi-Z, headphone
   source 1/2 or 3/4, Ch.1/2 Aux/Phono, Ch.3/4 Aux/Phono. These are
   hardware-only; the driver can't read or set them.

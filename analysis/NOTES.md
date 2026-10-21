@@ -9,14 +9,18 @@
 
 ## Hardware I/O (physical panels)
 
-**Front**: Mic/Line XLR-combo jack (Ch.1) with its own gain knob and a 48V
-LED; HiZ/Line 1/4" jack (Ch.2) with its own gain knob; headphone jack with
-volume knob.
+**Front**: Phono/Aux RCA inputs for both Ch.1/2 and Ch.3/4; Mic/Line
+XLR-combo jack (Ch.1) with its own Mic/Line gain knob, a +48V LED and a
+clip LED; HiZ/Line 1/4" jack (Ch.2) with its own gain knob and a clip
+LED; headphone jack with volume knob.
 
 **Rear**: Power (9V DC barrel), USB-B, MIDI Out/In (5-pin DIN), Digital
-(S/PDIF coax) Out/In, Outputs Ch.3/4 (RCA), Inserts (MIC/Line + HiZ/Line,
-1/4" jacks), Outputs Ch.1/2 (1/4" jacks), Phono/Aux RCA inputs for both
-Ch.1/2 and Ch.3/4.
+(S/PDIF coax) Out/In, Outputs Ch.3/4 (RCA), Inserts (MIC/Line for Ch.1 +
+HiZ/Line for Ch.2, 1/4" jacks), Outputs Ch.1/2 (1/4" jacks).
+
+(Corrected 2026-10-21: this section previously listed the Phono/Aux RCA
+inputs on the rear panel; they are on the front, as "Front inputs: Mic /
+Hi-Z / Line" below already had it.)
 
 **Side switches — hardware only, not USB/software controllable**:
 `48V` off/on, `Ch.1` Line/Mic, `Ch.2` Line/HiZ, `Phones Ch.` 1/2 | 3/4,
@@ -47,10 +51,17 @@ too, instead of allowing a software state (e.g. two source bits both
 do.
 
 Capture channels 5/6 have no corresponding entry in the ADC mux at all
-(no capture-source control exists for them) - consistent with them
-being a fixed digital (S/PDIF) input path that bypasses the WM8776s
-entirely, always listening to the rear Digital In jack, no source
-selection needed.
+(no capture-source control exists for them): they are an always-on,
+bit-exact digital copy of the PCM sent to Out 1/2, taken before any
+Direct monitoring is mixed in, and need no cable. Hardware-confirmed
+2026-10-16 - see `analysis/loopback-and-monitoring.md`, "What capture
+channels 5/6 are" and "Hardware test results (2026-10-16)".
+
+*Historical note (superseded by the result above):* this section
+originally guessed that 5/6 were a fixed S/PDIF input path listening to
+the rear Digital In jack, assuming the signal reached them through an
+S/PDIF cable (Digital Out -> Digital In); the no-cable case hadn't been
+tested. Without the cable the same signal still appears on 5/6.
 
 ## Interfaces / endpoints (full dump: `usb_descriptors.txt`)
 Driver config: InChannels=6, OutChannels=4, 24 bit (registry `Parameters`).

@@ -1,4 +1,8 @@
-# Build from this directory with: makepkg -si
+# Build from this directory with `makepkg -s`, then install the packages you
+# want with `sudo pacman -U <file>.pkg.tar.zst` - normally
+# snd-usb-phasex64-dkms and phasex64-panel. phasex64-wireplumber stays opt-in
+# (it changes WirePlumber's behaviour machine-wide), which is why this isn't
+# `makepkg -si`: that would install all three.
 pkgbase=phasex64
 pkgname=(snd-usb-phasex64-dkms phasex64-panel phasex64-wireplumber)
 pkgver=0.9.0

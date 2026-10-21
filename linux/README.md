@@ -25,7 +25,16 @@ panel was separately numbered 0.2.0 before that); the "Since v0.1.12" /
 | Mixer | every button from the Windows panel, plus "Clock Source" and "Digital Input Lock" |
 
 Playback and capture always run at the same sample rate (one clock in the
-device).
+device). **Tested rates:** 48 kHz is the rate of daily use and of the feature
+tests since driver v0.1.10 (live changes, MIDI, PipeWire/REAPER, buffer
+sizes). 44.1, 88.2 and 96 kHz were tested on
+hardware once, with v0.1.10 on 2026-10-14 (direct ALSA, no PipeWire):
+12 s of playback and capture with a 1 kHz tone through an analog loopback
+at each rate, real time, no errors, plus rate switches without
+replugging (`tests/hw/REPORT.md`, "Acceptance tests (2026-10-14...)");
+44.1 kHz also in the capture 5/6 bit-exactness test
+(`../analysis/loopback-and-monitoring.md`). They haven't been re-tested
+with the later features or through PipeWire.
 
 MIDI only works while a PCM stream (playback or capture) is active - e.g.
 with REAPER open and a stream running, or `arecord`/`aplay` against the

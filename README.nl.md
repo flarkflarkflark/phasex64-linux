@@ -47,8 +47,19 @@ Wat werkt:
 - PipeWire, en JACK-applicaties via `pipewire-jack`; bit-exact door
   PipeWire als het sink- en sourcevolume van de kaart op 100 % staat.
 - Buffergroottes tot 64 samples (1,3 ms bij 48 kHz).
-- Samplerates 44,1, 48, 88,2 en 96 kHz (afspelen en opnemen delen altijd
-  één samplerate).
+- Samplerates (afspelen en opnemen delen altijd één samplerate):
+  - **48 kHz** - dagelijks gebruik, en de samplerate van de functietests
+    sinds driver v0.1.10 (live wijzigingen, MIDI, PipeWire/REAPER,
+    buffergroottes).
+  - **44,1, 88,2 en 96 kHz** - ondersteund, en één keer op hardware
+    getest, met driver v0.1.10 op 2026-10-14 (direct via ALSA, zonder
+    PipeWire): per samplerate 12 s tegelijk afspelen en opnemen, een
+    toon van 1 kHz via een analoge loopback - realtime, de door het
+    apparaat teruggemelde samplerate klopte, geen fouten - plus wisselen
+    48 → 44,1 → 96 → 48 kHz zonder opnieuw in te pluggen. 44,1 kHz is
+    ook gebruikt voor de bit-exactheidstest van opnamekanalen 5/6
+    (2026-10-16). Sindsdien niet opnieuw getest, en niet via PipeWire of
+    REAPER.
 - Klokbron: intern, of vergrendeld op de S/PDIF-ingang.
 
 Geteste omgeving: Arch Linux, kernel 7.2.x, PipeWire 1.6.x,
@@ -98,12 +109,13 @@ Binnenin, gezien vanuit de driver: een Ploytec-USB-controller (USB-ID
 
 Aansluitingen op het exemplaar dat voor dit project is gebruikt:
 
-- **Voorkant:** Ch.1 combo-aansluiting (XLR + 6,3 mm jack) met gainknop,
-  +48 V- en clip-led; Ch.2 Hi-Z/Line-jack met gainknop en clip-led;
+- **Voorkant:** phono/aux-RCA-ingangen voor Ch.1/2 en Ch.3/4; Ch.1
+  mic-combo-aansluiting (XLR + 6,3 mm jack) met Mic/Line-gainknop, +48 V-
+  en clip-led; Ch.2 Hi-Z/Line-jack met gainknop en clip-led;
   koptelefoonaansluiting met volumeknop.
 - **Achterkant:** voeding (9 V DC), USB-B, MIDI out/in, S/PDIF (coaxiaal)
-  out/in, Out 3/4 (RCA), inserts voor Ch.1 en Ch.2, Out 1/2 (6,3 mm
-  jacks), phono/aux-RCA-ingangen voor Ch.1/2 en Ch.3/4.
+  out/in, Out 3/4 (RCA), inserts voor Ch.1 (Mic/Line) en Ch.2
+  (Hi-Z/Line), Out 1/2 (6,3 mm jacks).
 - **Schakelaars aan de zijkant:** 48 V aan/uit, Ch.1 Line/Mic, Ch.2
   Line/Hi-Z, koptelefoonbron 1/2 of 3/4, Ch.1/2 Aux/Phono, Ch.3/4
   Aux/Phono. Die zijn puur hardware; de driver kan ze niet lezen of
