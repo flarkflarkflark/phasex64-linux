@@ -72,6 +72,139 @@ make
 sudo insmod snd-usb-phasex64.ko
 ```
 
+(A module built by hand isn't signed; with Secure Boot on it won't load -
+see "Secure Boot" below.)
+
+`../aur/PKGBUILD` builds the same three packages from the release
+tarball instead of the checkout, for the AUR (package base `phasex64`;
+coming soon).
+
+## Installing on other distributions
+
+`scripts/install-dkms.sh` (in the repository root) installs the driver
+with DKMS on any distribution: it copies `linux/snd-usb-phasex64/` to
+`/usr/src/snd-usb-phasex64-<version>` and runs `dkms add`, `dkms build`
+and `dkms install` for the running kernel. DKMS then rebuilds the module
+after every kernel update.
+
+```sh
+scripts/install-dkms.sh --dry-run    # check prerequisites, print the commands, change nothing
+sudo scripts/install-dkms.sh
+sudo modprobe snd-usb-phasex64       # or unplug and replug the card
+```
+
+It checks the prerequisites first and, if one is missing, names the
+packages to install with apt, dnf, zypper or pacman:
+
+| | Debian / Ubuntu | Fedora | openSUSE |
+|---|---|---|---|
+| DKMS | `dkms` | `dkms` | `dkms` |
+| compiler, make | `build-essential` | `gcc make` | `gcc make` |
+| kernel headers | `linux-headers-$(uname -r)` | `kernel-devel-$(uname -r)` | `kernel-default-devel` |
+
+The headers must match the running kernel exactly. On AlmaLinux, Rocky
+and RHEL, dkms comes from EPEL. `--kernel VERSION` installs for another
+installed kernel instead of the running one.
+
+To upgrade, run the script from a newer checkout: it replaces the
+version it installed before. To remove the driver:
+
+```sh
+sudo scripts/uninstall-dkms.sh       # --dry-run works here too
+```
+
+Both scripts only touch what `install-dkms.sh` installed. If the driver
+came from a package (`snd-usb-phasex64-dkms` on Arch), they leave it
+alone and say so.
+
+**Build-tested in CI:** on every push, `.github/workflows/build.yml`
+builds the module with `W=1` in containers against the kernel headers
+of Arch Linux, Debian stable, Ubuntu 24.04, Ubuntu 22.04 and Fedora, and
+dry-runs `install-dkms.sh` there. That checks that the driver compiles
+against those kernels (7.2, 6.12, 6.8, 5.15 and 7.2 as of 2026-10-22);
+running it needs the hardware, which has been tested on Arch-based
+systems so far.
+
+### Control panel without a package
+
+Dependencies:
+
+| | Debian / Ubuntu | Fedora | openSUSE | Arch |
+|---|---|---|---|---|
+| Python 3 with Tk | `python3 python3-tk` | `python3 python3-tkinter` | `python3 python3-tk` | `python tk` |
+| `amixer`, `alsactl`, `aseqdump` | `alsa-utils` | `alsa-utils` | `alsa-utils` | `alsa-utils` |
+| `setpriv` (optional) | `util-linux` | `util-linux` | `util-linux` | `util-linux` |
+| `pw-metadata`, `pw-top` (optional) | `pipewire-bin` | `pipewire-utils` | `pipewire-tools` | `pipewire` |
+| translations, icons (optional) | `gettext librsvg2-bin` | `gettext librsvg2-tools` | `gettext-runtime rsvg-convert` | `gettext librsvg` |
+
+Without the PipeWire tools the BUFFER control is disabled. `setpriv`
+makes sure the panel's helper processes (`alsactl monitor`, `aseqdump`)
+end when the panel is killed; the panel works without it.
+
+Run it from the checkout:
+
+```sh
+cd linux/phasex64-panel
+po/build.sh          # translations (optional, needs msgfmt)
+./build-icons.sh     # window icon (optional, needs rsvg-convert)
+./phasex64-panel
+```
+
+A menu entry for your own user, without root - the panel finds its
+translations and icons next to the script the link points to, so keep
+the checkout where it is:
+
+```sh
+cd linux/phasex64-panel
+mkdir -p ~/.local/bin ~/.local/share/applications ~/.local/share/icons/hicolor/scalable/apps
+ln -sf "$PWD/phasex64-panel" ~/.local/bin/phasex64-panel
+sed "s|^Exec=.*|Exec=$HOME/.local/bin/phasex64-panel|" phasex64-panel.desktop \
+  > ~/.local/share/applications/phasex64-panel.desktop
+install -m644 icon.svg ~/.local/share/icons/hicolor/scalable/apps/phasex64-panel.svg
+```
+
+The optional WirePlumber profile installs per user as well - see
+"PipeWire / JACK" below. It needs WirePlumber 0.5 or later: Debian 13,
+Fedora and openSUSE Tumbleweed have that; Ubuntu 24.04 and 22.04 ship
+0.4, which uses a different configuration format and ignores the file.
+
+## Secure Boot
+
+With Secure Boot on, distribution kernels only load modules signed with
+a key the system trusts. Check with:
+
+```sh
+mokutil --sb-state                   # "SecureBoot enabled"?
+```
+
+An unsigned module, or one signed with a key that isn't enrolled, fails
+to load: `modprobe` reports `Key was rejected by service`, and `dmesg`
+shows the reason (a "Lockdown" or signature line).
+
+DKMS signs the module when it builds it; the key it signs with has to be
+enrolled once as a MOK (Machine Owner Key). `mokutil --import` asks for a
+one-time password; at the next reboot the blue MokManager screen asks
+you to "Enroll MOK" with that password. After that, DKMS-built modules
+load, also after kernel updates.
+
+- **Ubuntu:** DKMS signs with Ubuntu's own MOK
+  (`/var/lib/shim-signed/mok/MOK.der`). If another DKMS driver enrolled
+  it already, there's nothing to do. If not:
+  `sudo mokutil --import /var/lib/shim-signed/mok/MOK.der` and reboot.
+  [Ubuntu: UEFI Secure Boot](https://wiki.ubuntu.com/UEFI/SecureBoot).
+- **Fedora, Debian, openSUSE, Arch (DKMS 3):** DKMS generates its own key
+  the first time (`/var/lib/dkms/mok.key`, `mok.pub`; needs openssl) and
+  signs with it, but doesn't enrol it - do that yourself:
+  `sudo mokutil --import /var/lib/dkms/mok.pub` and reboot.
+  [DKMS: module signing](https://github.com/dkms-project/dkms#module-signing),
+  [Fedora: signing kernel modules for Secure Boot](https://docs.fedoraproject.org/en-US/fedora/f32/system-administrators-guide/kernel-module-driver-configuration/Working_with_Kernel_Modules/),
+  [Debian: Secure Boot](https://wiki.debian.org/SecureBoot).
+- **Built by hand** (`make`, `insmod`): not signed. Sign it yourself with
+  the kernel's `scripts/sign-file` and an enrolled key (see the Fedora
+  link), or use DKMS.
+
+`mokutil --test-key <certificate>` tells you whether a key is enrolled.
+
 ## Control panel
 
 The original skin isn't shipped with this project. Import it once from the
@@ -489,6 +622,15 @@ up corresponds to 0dBFS at the ADC. Typical settings: condenser mic ->
 48V + Mic switch, gain low and work up; passive bass/guitar -> HiZ;
 synth or other line-level gear -> Line. Measured gain ranges and raw
 numbers are in `analysis/NOTES.md`, "Front inputs: Mic / Hi-Z / Line".
+
+**Turntable hum:** connect the turntable's ground wire to the ground
+terminal (⏚) on the front, between the RCA inputs and the Ch.1 combo
+socket.
+
+**"Run" LED** (next to the Hi-Z gain knob): the unit is connected over
+USB and powered. Verified on hardware: it stays lit with the driver
+loaded while no PCM stream is running (both PCMs closed, PipeWire nodes
+suspended) - it doesn't indicate streaming.
 
 ## Recording what you hear
 

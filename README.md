@@ -4,6 +4,7 @@ Linux driver and control panel for the PHASE X64 USB audio interface.
 
 ![Licence: GPL-2.0-only](https://img.shields.io/badge/licence-GPL--2.0--only-blue)
 ![Status: public beta](https://img.shields.io/badge/status-public%20beta-orange)
+[![build](https://github.com/flarkflarkflark/phasex64-linux/actions/workflows/build.yml/badge.svg)](https://github.com/flarkflarkflark/phasex64-linux/actions/workflows/build.yml)
 
 Nederlandse versie: [README.nl.md](README.nl.md)
 
@@ -28,7 +29,9 @@ works with.
 
 ## Status
 
-**v0.9.0, public beta.** Tested on one unit, on one machine.
+**v0.9.0, public beta.** Tested on one unit: everything below on one
+machine; on a second machine so far only building, loading and
+enumeration (see "Tested environment").
 
 What works:
 
@@ -56,8 +59,20 @@ What works:
     through PipeWire or REAPER.
 - Clock source: internal, or locked to the S/PDIF input.
 
-Tested environment: Arch Linux, kernel 7.2.x, PipeWire 1.6.x,
-WirePlumber 0.5.x, REAPER 7.82 via `pipewire-jack`.
+Tested environment:
+
+- **Machine 1** (all of the above): Arch Linux, kernel 7.2.x, PipeWire
+  1.6.x, WirePlumber 0.5.x, REAPER 7.82 via `pipewire-jack`.
+- **Machine 2** (2026-10-22): EndeavourOS, kernel 6.18.57-lts (DKMS
+  also built the module for 7.2.11), a different AMD xHCI USB
+  controller, the unit connected through a USB hub next to other USB
+  audio devices. The module builds, loads and enumerates at high speed
+  without errors; playback and capture haven't been tested on this
+  machine yet.
+
+On top of that, every push builds the module against the kernel headers
+of several distributions (no hardware involved) - see
+[Other distributions](#other-distributions).
 
 ## Screenshots
 
@@ -104,13 +119,23 @@ Connections on the unit used for this project:
 - **Front:** phono/aux RCA inputs for Ch.1/2 and Ch.3/4; Ch.1 mic combo
   socket (XLR + 6.3 mm jack) with Mic/Line gain knob, +48 V and clip
   LEDs; Ch.2 Hi-Z/Line jack with gain knob and clip LED; headphone jack
-  with volume knob.
+  with volume knob; ground terminal (⏚) between the RCA inputs and the
+  Ch.1 combo socket; "Run" LED next to the Hi-Z gain knob.
 - **Rear:** power (9 V DC), USB-B, MIDI out/in, S/PDIF (coaxial) out/in,
   Out 3/4 (RCA), inserts for Ch.1 (Mic/Line) and Ch.2 (Hi-Z/Line),
   Out 1/2 (6.3 mm jacks).
 - **Side switches:** 48 V on/off, Ch.1 Line/Mic, Ch.2 Line/Hi-Z, headphone
   source 1/2 or 3/4, Ch.1/2 Aux/Phono, Ch.3/4 Aux/Phono. These are
   hardware-only; the driver can't read or set them.
+
+**Turntable:** connect the turntable's ground wire to the ground
+terminal (⏚) on the front, between the RCA inputs and the Ch.1 combo
+socket, to avoid hum.
+
+**"Run" LED:** means the unit is connected over USB and powered. Checked
+on hardware: it stays lit with the driver loaded while no PCM stream is
+running (both PCMs closed, PipeWire nodes suspended), so it doesn't show
+whether audio is streaming.
 
 ### Measured with this driver
 
@@ -172,12 +197,55 @@ sudo pacman -U phasex64-wireplumber-*.pkg.tar.zst
 systemctl --user restart wireplumber
 ```
 
-Other distributions: packages follow in a later release. Until then the
-module builds by hand on any distribution with kernel headers (see
-[Installing on Arch Linux](linux/README.md#installing-on-arch-linux),
-"Building by hand"), and the panel runs straight from the checkout as
-`linux/phasex64-panel/phasex64-panel` (needs Python 3 with Tk, and
-alsa-utils). The full manual is [linux/README.md](linux/README.md).
+The full manual is [linux/README.md](linux/README.md).
+
+**AUR:** `snd-usb-phasex64-dkms`, `phasex64-panel` and
+`phasex64-wireplumber` (package base `phasex64`) - coming soon.
+
+## Other distributions
+
+Every push builds the module against the distributions' own kernel
+headers in CI
+([build status](https://github.com/flarkflarkflark/phasex64-linux/actions/workflows/build.yml)):
+Arch Linux, Debian stable, Ubuntu 24.04 and 22.04, and Fedora - kernels
+7.2, 6.12, 6.8, 5.15 and 7.2 as of 2026-10-22. That is a build test
+only; the driver has been run on hardware on Arch-based systems so far.
+
+**Driver**, with DKMS (rebuilt after every kernel update). The script
+checks for dkms, make, gcc and the headers of your running kernel, and
+names the packages to install for apt, dnf, zypper or pacman if
+something is missing:
+
+```sh
+git clone https://github.com/flarkflarkflark/phasex64-linux.git
+cd phasex64-linux
+scripts/install-dkms.sh --dry-run   # check prerequisites, show the steps
+sudo scripts/install-dkms.sh
+sudo modprobe snd-usb-phasex64      # or unplug and replug the card
+```
+
+Remove it with `sudo scripts/uninstall-dkms.sh`. On Arch-based
+distributions, use the package (see Quick start) instead.
+
+**Secure Boot:** with Secure Boot on, only signed modules load; an
+unsigned one fails with `Key was rejected by service`. DKMS signs the
+module, and its key has to be enrolled once (MOK) at a reboot - see
+[Secure Boot](linux/README.md#secure-boot). Check with
+`mokutil --sb-state`.
+
+**Control panel:** install its dependencies, then run
+`linux/phasex64-panel/phasex64-panel` from the checkout
+([menu entry and details](linux/README.md#control-panel-without-a-package)).
+
+| Distribution | Required | Optional: BUFFER control |
+|---|---|---|
+| Debian, Ubuntu | `python3 python3-tk alsa-utils` | `pipewire-bin` |
+| Fedora | `python3 python3-tkinter alsa-utils` | `pipewire-utils` |
+| openSUSE | `python3 python3-tk alsa-utils` | `pipewire-tools` |
+| Arch | `python tk alsa-utils` | `pipewire` |
+
+`setpriv` from util-linux (installed almost everywhere) is used too if
+present.
 
 ## Known limitations
 

@@ -74,6 +74,143 @@ make
 sudo insmod snd-usb-phasex64.ko
 ```
 
+(Een met de hand gebouwde module is niet ondertekend; met Secure Boot
+aan laadt hij niet - zie "Secure Boot" hieronder.)
+
+`../aur/PKGBUILD` bouwt dezelfde drie pakketten uit de release-tarball in
+plaats van uit de checkout, voor de AUR (pakketbasis `phasex64`;
+binnenkort).
+
+## Installeren op andere distributies
+
+`scripts/install-dkms.sh` (in de root van de repository) installeert de
+driver met DKMS op elke distributie: het kopieert
+`linux/snd-usb-phasex64/` naar `/usr/src/snd-usb-phasex64-<versie>` en
+voert `dkms add`, `dkms build` en `dkms install` uit voor de draaiende
+kernel. DKMS bouwt de module daarna na elke kernelupdate opnieuw.
+
+```sh
+scripts/install-dkms.sh --dry-run    # vereisten controleren, commando's tonen, niets veranderen
+sudo scripts/install-dkms.sh
+sudo modprobe snd-usb-phasex64       # of de kaart uit- en weer inpluggen
+```
+
+Het controleert eerst de vereisten en noemt, als er een ontbreekt, de
+pakketten om te installeren met apt, dnf, zypper of pacman:
+
+| | Debian / Ubuntu | Fedora | openSUSE |
+|---|---|---|---|
+| DKMS | `dkms` | `dkms` | `dkms` |
+| compiler, make | `build-essential` | `gcc make` | `gcc make` |
+| kernelheaders | `linux-headers-$(uname -r)` | `kernel-devel-$(uname -r)` | `kernel-default-devel` |
+
+De headers moeten precies bij de draaiende kernel passen. Op AlmaLinux,
+Rocky en RHEL komt dkms uit EPEL. Met `--kernel VERSIE` installeer je
+voor een andere geïnstalleerde kernel dan de draaiende.
+
+Bijwerken: start het script vanuit een nieuwere checkout; het vervangt de
+versie die het eerder installeerde. Verwijderen:
+
+```sh
+sudo scripts/uninstall-dkms.sh       # --dry-run werkt hier ook
+```
+
+Beide scripts raken alleen aan wat `install-dkms.sh` heeft geïnstalleerd.
+Komt de driver uit een pakket (`snd-usb-phasex64-dkms` op Arch), dan
+laten ze die met rust en melden dat.
+
+**Buildtest in CI:** bij elke push bouwt `.github/workflows/build.yml` de
+module met `W=1` in containers tegen de kernelheaders van Arch Linux,
+Debian stable, Ubuntu 24.04, Ubuntu 22.04 en Fedora, en doet daar een
+dry-run van `install-dkms.sh`. Dat controleert dat de driver tegen die
+kernels compileert (7.2, 6.12, 6.8, 5.15 en 7.2 op 2026-10-22); om hem te
+draaien is de hardware nodig, en die is tot nu toe op Arch-gebaseerde
+systemen getest.
+
+### Configuratiescherm zonder pakket
+
+Afhankelijkheden:
+
+| | Debian / Ubuntu | Fedora | openSUSE | Arch |
+|---|---|---|---|---|
+| Python 3 met Tk | `python3 python3-tk` | `python3 python3-tkinter` | `python3 python3-tk` | `python tk` |
+| `amixer`, `alsactl`, `aseqdump` | `alsa-utils` | `alsa-utils` | `alsa-utils` | `alsa-utils` |
+| `setpriv` (optioneel) | `util-linux` | `util-linux` | `util-linux` | `util-linux` |
+| `pw-metadata`, `pw-top` (optioneel) | `pipewire-bin` | `pipewire-utils` | `pipewire-tools` | `pipewire` |
+| vertalingen, iconen (optioneel) | `gettext librsvg2-bin` | `gettext librsvg2-tools` | `gettext-runtime rsvg-convert` | `gettext librsvg` |
+
+Zonder de PipeWire-tools is de BUFFER-regeling uitgeschakeld. `setpriv`
+zorgt dat de hulpprocessen van het configuratiescherm (`alsactl monitor`,
+`aseqdump`) stoppen als het scherm wordt gekild; het scherm werkt ook
+zonder.
+
+Starten vanuit de checkout:
+
+```sh
+cd linux/phasex64-panel
+po/build.sh          # vertalingen (optioneel, vereist msgfmt)
+./build-icons.sh     # venstericoon (optioneel, vereist rsvg-convert)
+./phasex64-panel
+```
+
+Een menu-item voor je eigen gebruiker, zonder root - het scherm vindt
+zijn vertalingen en iconen naast het script waar de link naar wijst, dus
+laat de checkout staan waar hij staat:
+
+```sh
+cd linux/phasex64-panel
+mkdir -p ~/.local/bin ~/.local/share/applications ~/.local/share/icons/hicolor/scalable/apps
+ln -sf "$PWD/phasex64-panel" ~/.local/bin/phasex64-panel
+sed "s|^Exec=.*|Exec=$HOME/.local/bin/phasex64-panel|" phasex64-panel.desktop \
+  > ~/.local/share/applications/phasex64-panel.desktop
+install -m644 icon.svg ~/.local/share/icons/hicolor/scalable/apps/phasex64-panel.svg
+```
+
+Het optionele WirePlumber-profiel installeer je ook per gebruiker - zie
+"PipeWire / JACK" hieronder. Het vereist WirePlumber 0.5 of nieuwer:
+Debian 13, Fedora en openSUSE Tumbleweed hebben dat; Ubuntu 24.04 en
+22.04 leveren 0.4, dat een ander configuratieformaat gebruikt en het
+bestand negeert.
+
+## Secure Boot
+
+Met Secure Boot aan laden distributiekernels alleen modules die zijn
+ondertekend met een sleutel die het systeem vertrouwt. Controleren met:
+
+```sh
+mokutil --sb-state                   # "SecureBoot enabled"?
+```
+
+Een niet-ondertekende module, of een die is ondertekend met een sleutel
+die niet is ingeschreven, laadt niet: `modprobe` meldt
+`Key was rejected by service`, en `dmesg` toont de reden (een regel over
+"Lockdown" of de handtekening).
+
+DKMS ondertekent de module bij het bouwen; de sleutel waarmee het
+ondertekent moet één keer worden ingeschreven als MOK (Machine Owner
+Key). `mokutil --import` vraagt om een eenmalig wachtwoord; bij de
+volgende herstart vraagt het blauwe MokManager-scherm je om "Enroll MOK"
+met dat wachtwoord. Daarna laden door DKMS gebouwde modules, ook na
+kernelupdates.
+
+- **Ubuntu:** DKMS ondertekent met Ubuntu's eigen MOK
+  (`/var/lib/shim-signed/mok/MOK.der`). Heeft een andere DKMS-driver die
+  al ingeschreven, dan hoef je niets te doen. Zo niet:
+  `sudo mokutil --import /var/lib/shim-signed/mok/MOK.der` en herstarten.
+  [Ubuntu: UEFI Secure Boot](https://wiki.ubuntu.com/UEFI/SecureBoot).
+- **Fedora, Debian, openSUSE, Arch (DKMS 3):** DKMS maakt de eerste keer
+  een eigen sleutel aan (`/var/lib/dkms/mok.key`, `mok.pub`; vereist
+  openssl) en ondertekent daarmee, maar schrijft hem niet in - dat doe je
+  zelf: `sudo mokutil --import /var/lib/dkms/mok.pub` en herstarten.
+  [DKMS: module signing](https://github.com/dkms-project/dkms#module-signing),
+  [Fedora: kernelmodules ondertekenen voor Secure Boot](https://docs.fedoraproject.org/en-US/fedora/f32/system-administrators-guide/kernel-module-driver-configuration/Working_with_Kernel_Modules/),
+  [Debian: Secure Boot](https://wiki.debian.org/SecureBoot).
+- **Met de hand gebouwd** (`make`, `insmod`): niet ondertekend. Onderteken
+  hem zelf met `scripts/sign-file` van de kernel en een ingeschreven
+  sleutel (zie de Fedora-link), of gebruik DKMS.
+
+`mokutil --test-key <certificaat>` vertelt of een sleutel is ingeschreven.
+
 ## Configuratiescherm
 
 De originele skin zit niet in dit project. Importeer die één keer uit het
@@ -514,6 +651,15 @@ condensatormicrofoon -> 48V + schakelaar op Mic, gain laag en opbouwen;
 passieve bas/gitaar -> HiZ; synth of andere line-level apparatuur ->
 Line. Gemeten gain-bereiken en ruwe getallen staan in
 `analysis/NOTES.md`, "Front inputs: Mic / Hi-Z / Line".
+
+**Brom van de platenspeler:** sluit de aardedraad van de platenspeler aan
+op de aardklem (⏚) aan de voorkant, tussen de RCA-ingangen en de
+combo-aansluiting van Ch.1.
+
+**"Run"-led** (naast de Hi-Z-gainknop): het apparaat is via USB verbonden
+en heeft stroom. Op hardware geverifieerd: hij blijft branden met de
+driver geladen terwijl er geen PCM-stream loopt (beide PCM's gesloten,
+PipeWire-nodes gesuspend) - hij geeft niet aan of er gestreamd wordt.
 
 ## Opnemen wat je hoort
 
