@@ -3,6 +3,9 @@
 # snd-usb-phasex64-dkms and phasex64-panel. phasex64-wireplumber stays opt-in
 # (it changes WirePlumber's behaviour machine-wide), which is why this isn't
 # `makepkg -si`: that would install all three.
+#
+# ../aur/PKGBUILD builds the same packages from the release tarball for
+# the AUR; keep pkgver/pkgrel and the package() functions in step.
 pkgbase=phasex64
 pkgname=(snd-usb-phasex64-dkms phasex64-panel phasex64-wireplumber)
 pkgver=0.9.0
