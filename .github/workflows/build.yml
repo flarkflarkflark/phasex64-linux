@@ -40,7 +40,12 @@ jobs:
 
   tests:
     runs-on: ubuntu-24.04
-    container: ubuntu:24.04
+    container:
+      image: ubuntu:24.04
+      # The job container's PID 1 is `tail -f /dev/null`, which never reaps
+      # orphans: processes the panel tests kill stay zombies and look alive
+      # to their kill(pid, 0) checks. --init runs a reaping init as PID 1.
+      options: --init
     steps:
       - name: install test dependencies
         run: |
