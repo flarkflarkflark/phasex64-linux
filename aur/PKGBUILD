@@ -1,6 +1,8 @@
 # Maintainer: flarkflarkflark
 #
-# AUR build of the tagged release tarball. linux/PKGBUILD is the in-repo
+# AUR build of the release tarball asset (phasex64-linux-<ver>.tar.gz,
+# a git archive of the tag, published with SHA256SUMS by
+# .github/workflows/release.yml). linux/PKGBUILD is the in-repo
 # variant that builds from a checkout instead; both produce the same split
 # packages from the same files. Keep pkgver/pkgrel and the package()
 # functions of the two in step.
@@ -12,17 +14,17 @@
 # want - `makepkg -si` would install all three.
 pkgbase=phasex64
 pkgname=(snd-usb-phasex64-dkms phasex64-panel phasex64-wireplumber)
-pkgver=0.9.0
+pkgver=0.9.1
 # Same pkgrel as linux/PKGBUILD for the same content, so a package built
 # from the checkout and the AUR one compare as equal versions.
-pkgrel=2
+pkgrel=1
 pkgdesc="ALSA driver and control panel for the TerraTec/TerraSoniq PHASE X64 USB"
 arch=(any)
 url="https://github.com/flarkflarkflark/phasex64-linux"
 license=(GPL-2.0-only)
 makedepends=(gettext librsvg)
-source=("$pkgbase-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('08f57ebda9d4853f31526449f4672376bb632417a067eddee6e54702bcaa8dc7')
+source=("$url/releases/download/v$pkgver/phasex64-linux-$pkgver.tar.gz")
+sha256sums=('945d8003bbd399cc854d41c1079debcbe3938ff39b6f5611f2f6bc867fbf11bb')
 
 _src() {
   printf '%s/phasex64-linux-%s/linux' "$srcdir" "$pkgver"

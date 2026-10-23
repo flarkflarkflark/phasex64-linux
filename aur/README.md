@@ -1,8 +1,10 @@
 # AUR packaging
 
 `PKGBUILD` and `.SRCINFO` here are what goes into the AUR repository
-`phasex64`. They build from the release tarball
-(`archive/refs/tags/v<pkgver>.tar.gz`), not from a checkout;
+`phasex64`. They build from the release tarball asset
+(`releases/download/v<pkgver>/phasex64-linux-<pkgver>.tar.gz`, built by
+`.github/workflows/release.yml` and listed in the release's
+`SHA256SUMS`), not from a checkout;
 `linux/PKGBUILD` is the checkout variant. Both produce the same split
 packages from the same files.
 
@@ -26,7 +28,9 @@ here (translations and icons).
 
 1. Bump `pkgver` (and reset `pkgrel=1`) in both PKGBUILDs once the tag
    is pushed; packaging-only changes bump `pkgrel` in both.
-2. Update `sha256sums` here: `makepkg -g` (downloads the tag tarball).
+2. Update `sha256sums` here once the release is published: `makepkg -g`
+   (downloads the tarball asset); it must equal the tarball's line in the
+   release's `SHA256SUMS`.
 3. Build with `makepkg -s` in a clean directory, check with
    `namcap PKGBUILD *.pkg.tar.zst`.
 4. `makepkg --printsrcinfo > .SRCINFO`.

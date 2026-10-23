@@ -1,14 +1,14 @@
 pkgbase = phasex64
 	pkgdesc = ALSA driver and control panel for the TerraTec/TerraSoniq PHASE X64 USB
-	pkgver = 0.9.0
-	pkgrel = 2
+	pkgver = 0.9.1
+	pkgrel = 1
 	url = https://github.com/flarkflarkflark/phasex64-linux
 	arch = any
 	license = GPL-2.0-only
 	makedepends = gettext
 	makedepends = librsvg
-	source = phasex64-0.9.0.tar.gz::https://github.com/flarkflarkflark/phasex64-linux/archive/refs/tags/v0.9.0.tar.gz
-	sha256sums = 08f57ebda9d4853f31526449f4672376bb632417a067eddee6e54702bcaa8dc7
+	source = https://github.com/flarkflarkflark/phasex64-linux/releases/download/v0.9.1/phasex64-linux-0.9.1.tar.gz
+	sha256sums = 945d8003bbd399cc854d41c1079debcbe3938ff39b6f5611f2f6bc867fbf11bb
 
 pkgname = snd-usb-phasex64-dkms
 	pkgdesc = ALSA driver for the TerraTec/TerraSoniq PHASE X64 USB (DKMS)
