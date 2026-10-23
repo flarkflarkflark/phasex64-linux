@@ -46,6 +46,11 @@ niet "gewapend" staan (zie `../analysis/NOTES.md`, "MIDI").
 
 ## Installeren op Arch Linux
 
+Kant-en-klare pakketten voor elke release (alleen de module zelf wordt
+nog gebouwd, door DKMS) staan beschreven in de hoofd-README,
+[Installatie](../README.nl.md#installatie). Deze sectie bouwt dezelfde
+pakketten zelf vanuit een checkout:
+
 ```sh
 sudo pacman -S --needed base-devel dkms linux-headers   # of linux-zen-headers enz.
 cd linux
@@ -83,8 +88,10 @@ binnenkort).
 
 ## Installeren op andere distributies
 
-`scripts/install-dkms.sh` (in de root van de repository) installeert de
-driver met DKMS op elke distributie: het kopieert
+`scripts/install-dkms.sh` (in de root van de repository, in een checkout
+of in de uitgepakte release-tarball `phasex64-linux-<versie>.tar.gz`, zie
+[Installatie](../README.nl.md#installatie)) installeert de driver met
+DKMS op elke distributie: het kopieert
 `linux/snd-usb-phasex64/` naar `/usr/src/snd-usb-phasex64-<versie>` en
 voert `dkms add`, `dkms build` en `dkms install` uit voor de draaiende
 kernel. DKMS bouwt de module daarna na elke kernelupdate opnieuw.

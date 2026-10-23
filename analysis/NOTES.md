@@ -1720,8 +1720,12 @@ forced value: an application may still request a larger quantum.
 xHCI controller than the first machine, the PHASE X64 connected through
 a USB hub next to other USB audio devices. The driver builds on this
 6.18 LTS kernel (DKMS also built it for 7.2.11 on the same machine),
-loads, and enumerates at high speed without errors. Playback and capture
-not tested on this machine yet. Still one unit.
+loads, and enumerates at high speed without errors. Still one unit.
+
+Update (2026-10-23, user-tested on this machine): playback and recording
+at the same time run stable through the USB hub; the WirePlumber
+profile only affects the PHASE X64, the other USB audio devices keep
+their own profiles.
 
 **CI build matrix** (`.github/workflows/build.yml`, build only, no
 hardware): `make -C <headers> M=... W=1 modules` against each

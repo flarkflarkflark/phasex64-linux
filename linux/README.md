@@ -44,6 +44,11 @@ stay armed (see `../analysis/NOTES.md`, "MIDI").
 
 ## Installing on Arch Linux
 
+Ready-built packages for each release (no compiling except the module
+itself, which DKMS builds) are described in the main README,
+[Installation](../README.md#installation). This section builds the same
+packages yourself from a checkout:
+
 ```sh
 sudo pacman -S --needed base-devel dkms linux-headers   # or linux-zen-headers etc.
 cd linux
@@ -81,8 +86,10 @@ coming soon).
 
 ## Installing on other distributions
 
-`scripts/install-dkms.sh` (in the repository root) installs the driver
-with DKMS on any distribution: it copies `linux/snd-usb-phasex64/` to
+`scripts/install-dkms.sh` (in the repository root, in a checkout or in
+the extracted release tarball `phasex64-linux-<version>.tar.gz`, see
+[Installation](../README.md#installation)) installs the driver with DKMS
+on any distribution: it copies `linux/snd-usb-phasex64/` to
 `/usr/src/snd-usb-phasex64-<version>` and runs `dkms add`, `dkms build`
 and `dkms install` for the running kernel. DKMS then rebuilds the module
 after every kernel update.

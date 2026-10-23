@@ -26,12 +26,17 @@ $section
 
 ### Install
 
-- **Arch Linux, Manjaro, EndeavourOS:** install the driver and the
-  control panel straight from this release:
+- **Arch Linux, Manjaro, EndeavourOS:** download the driver and the
+  control panel package, check them, install them (pacman refuses
+  unsigned packages given as a URL, so install the downloaded files):
 
   \`\`\`sh
-  sudo pacman -U $BASE/snd-usb-phasex64-dkms-$VERSION-$PKGREL-any.pkg.tar.zst \\
-                 $BASE/phasex64-panel-$VERSION-$PKGREL-any.pkg.tar.zst
+  curl -L --remote-name-all $BASE/SHA256SUMS \\
+    $BASE/snd-usb-phasex64-dkms-$VERSION-$PKGREL-any.pkg.tar.zst \\
+    $BASE/phasex64-panel-$VERSION-$PKGREL-any.pkg.tar.zst
+  sha256sum -c --ignore-missing SHA256SUMS
+  sudo pacman -U snd-usb-phasex64-dkms-$VERSION-$PKGREL-any.pkg.tar.zst \\
+    phasex64-panel-$VERSION-$PKGREL-any.pkg.tar.zst
   \`\`\`
 
   \`phasex64-wireplumber\` is optional; read "PipeWire / JACK" in the
