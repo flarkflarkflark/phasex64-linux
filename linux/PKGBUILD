@@ -8,15 +8,14 @@
 # the AUR; keep pkgver/pkgrel and the package() functions in step.
 pkgbase=phasex64
 pkgname=(snd-usb-phasex64-dkms phasex64-panel phasex64-wireplumber)
-pkgver=0.9.0
+pkgver=0.9.1
 # One project version for everything in this repo - the driver's
 # MODULE_VERSION, dkms.conf's PACKAGE_VERSION, the panel's VERSION and
 # this pkgver - starting with 0.9.0, the first public release (the
 # project jumped there from 0.1.13; the panel was separately numbered
 # 0.2.0 before that). pkgrel is only for packaging-only changes, per
 # normal Arch convention, and resets to 1 whenever pkgver changes.
-# rel 2: panel-only - BUFFER control for PipeWire's quantum.
-pkgrel=2
+pkgrel=1
 arch=(any)
 license=(GPL-2.0-only)
 makedepends=(gettext librsvg)

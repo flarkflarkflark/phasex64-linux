@@ -84,7 +84,7 @@ class PotUpToDateTest(unittest.TestCase):
             fresh = Path(tmp) / "fresh.pot"
             subprocess.run(
                 ["xgettext", "--language=Python", "--from-code=UTF-8", "--keyword=_",
-                 "--package-name=phasex64-panel", "--package-version=0.9.0",
+                 "--package-name=phasex64-panel", "--package-version=0.9.1",
                  "-o", str(fresh), str(SCRIPT)],
                 check=True, capture_output=True)
             fresh_ids = set(parse_po(fresh)) - {""}
