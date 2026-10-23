@@ -42,6 +42,9 @@ jobs:
       - name: build and check assets
         id: build
         run: |
+          # The checkout belongs to the runner's user, this container runs
+          # as root: let git work in it.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           tag=""
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             tag="$GITHUB_REF_NAME"
