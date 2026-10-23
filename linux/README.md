@@ -686,4 +686,5 @@ name, so `dmesg | grep -i phasex64` alone won't find it - grep for
 
 The driver, the control panel and everything else in this repository are
 licensed under the GNU General Public License, version 2 only
-(`GPL-2.0-only`) - see `../LICENSE`.
+(`GPL-2.0-only`) - see `../LICENSE` - except the hardware photos in
+`../docs/hardware/`, which are CC BY 4.0 (see the README there).
