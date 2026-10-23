@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Builds the release assets (source tarball, the three arch=any Arch
+# packages, SHA256SUMS) and, for a pushed v* tag, publishes them as a
+# GitHub release. A push to a release/* branch, or a manual run with
+# dry-run on, only builds the assets and uploads them as a workflow
+# artifact. No prebuilt kernel module is ever built or attached: DKMS
+# builds the driver on the user's machine.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+    # Dry run of the assets on release branches (workflow_dispatch only
+    # works once this file is on the default branch).
+    branches: ["release/**"]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Only build the assets and upload them as a workflow artifact (never create a release)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  assets:
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    outputs:
+      version: ${{ steps.build.outputs.version }}
+    steps:
+      - name: install build dependencies
+        run: |
+          pacman-key --init
+          pacman -Syu --noconfirm --needed git base-devel gettext librsvg
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: build and check assets
+        id: build
+        run: |
+          # The checkout belongs to the runner's user, this container runs
+          # as root: let git work in it.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          tag=""
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag="$GITHUB_REF_NAME"
+            # actions/checkout fetches only the tagged commit; release-assets.sh
+            # resolves the tag itself to confirm HEAD is that commit.
+            git fetch --depth=1 origin "+refs/tags/$tag:refs/tags/$tag"
+          fi
+          .github/ci/release-assets.sh dist "$tag"
+          echo "version=$(sed -n 's/^PACKAGE_VERSION="\(.*\)"$/\1/p' linux/snd-usb-phasex64/dkms.conf)" >>"$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: phasex64-linux-${{ steps.build.outputs.version }}-release-assets
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    needs: assets
+    # Only for a tag: on push, or by hand with dry-run switched off (e.g. to
+    # retry a failed publish). A dry run never gets here.
+    if: >-
+      github.ref_type == 'tag' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && !inputs.dry-run))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.assets.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: phasex64-linux-${{ needs.assets.outputs.version }}-release-assets
+          path: dist
+      - name: create the GitHub release
+        run: |
+          (cd dist && sha256sum -c SHA256SUMS)
+          .github/ci/release-notes.sh "$VERSION" >notes.md
+          # Title: the annotated tag's subject, e.g. "v0.9.1 — ...".
+          tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" -q .object.sha)"
+          title="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_sha" -q '.message' 2>/dev/null | head -1 || true)"
+          [ -n "$title" ] || title="$GITHUB_REF_NAME"
+          # 0.x is still beta.
+          prerelease=""
+          case "$VERSION" in 0.*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag $prerelease --title "$title" --notes-file notes.md

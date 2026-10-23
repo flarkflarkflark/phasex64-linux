@@ -4,10 +4,14 @@ Linux-driver en configuratiescherm voor de PHASE X64 USB-audio-interface.
 
 ![Licentie: GPL-2.0-only](https://img.shields.io/badge/licence-GPL--2.0--only-blue)
 ![Status: publieke bèta](https://img.shields.io/badge/status-public%20beta-orange)
+[![Release](https://img.shields.io/github/v/release/flarkflarkflark/phasex64-linux?include_prereleases&sort=semver)](https://github.com/flarkflarkflark/phasex64-linux/releases)
 [![build](https://github.com/flarkflarkflark/phasex64-linux/actions/workflows/build.yml/badge.svg)](https://github.com/flarkflarkflark/phasex64-linux/actions/workflows/build.yml)
 
 > Vertaling van [README.md](README.md), dat leidend is. Bij verschil geldt
 > de Engelse tekst.
+
+Releases: [alle releases](https://github.com/flarkflarkflark/phasex64-linux/releases) ·
+Wijzigingen: [CHANGELOG.md](CHANGELOG.md) (Engels)
 
 ## Wat het is
 
@@ -32,9 +36,8 @@ werkt.
 
 ## Status
 
-**v0.9.0, publieke bèta.** Getest met één exemplaar: alles hieronder op
-één machine; op een tweede machine tot nu toe alleen bouwen, laden en
-enumeratie (zie "Geteste omgeving").
+**v0.9.1, publieke bèta.** Getest met één exemplaar, op twee machines
+(zie [Geteste omgeving](#geteste-omgeving)).
 
 Wat werkt:
 
@@ -65,19 +68,161 @@ Wat werkt:
     REAPER.
 - Klokbron: intern, of vergrendeld op de S/PDIF-ingang.
 
-Geteste omgeving:
+### Geteste omgeving
+
+Op hardware (één exemplaar):
 
 - **Machine 1** (alles hierboven): Arch Linux, kernel 7.2.x, PipeWire
   1.6.x, WirePlumber 0.5.x, REAPER 7.82 via `pipewire-jack`.
-- **Machine 2** (2026-10-22): EndeavourOS, kernel 6.18.57-lts (DKMS
-  bouwde de module ook voor 7.2.11), een andere AMD-xHCI-USB-controller,
-  het apparaat aangesloten via een USB-hub naast andere USB-audioapparaten.
-  De module bouwt, laadt en enumereert op high speed zonder fouten;
-  afspelen en opnemen zijn op deze machine nog niet getest.
+- **Machine 2:** EndeavourOS, kernel 6.18 LTS (DKMS bouwde de module ook
+  voor 7.2), een andere AMD-xHCI-USB-controller, het apparaat aangesloten
+  via een USB-hub naast andere USB-audioapparaten. Tegelijk afspelen en
+  opnemen draait stabiel; het WirePlumber-profiel heeft alleen invloed op
+  de PHASE X64, niet op de andere audioapparaten.
 
-Daarnaast bouwt elke push de module tegen de kernelheaders van
-verschillende distributies (zonder hardware) - zie
-[Andere distributies](#andere-distributies).
+Buildtest in CI bij elke push, tegen de eigen kernelheaders van elke
+distributie (zonder hardware;
+[buildstatus](https://github.com/flarkflarkflark/phasex64-linux/actions/workflows/build.yml)):
+
+| Distributie | Kernel |
+|---|---|
+| Ubuntu 22.04 | 5.15 |
+| Ubuntu 24.04 | 6.8 |
+| Debian 13 (stable) | 6.12 |
+| Arch Linux | 7.2 |
+| Fedora 44 | 7.2 |
+
+(Kernelversies op 2026-10-22; CI gebruikt altijd de actuele headers van
+de distributies.)
+
+## Installatie
+
+Kies een van de vier manieren hieronder. In alle gevallen bouwt DKMS de
+driver op je eigen machine, voor jouw kernel - er wordt geen kant-en-klare
+kernelmodule meegeleverd - dus de kernelheaders van je kernel moeten
+geïnstalleerd zijn.
+
+<a id="snel-aan-de-slag-arch-linux--manjaro"></a>
+
+### 1. Arch Linux, Manjaro, EndeavourOS: releasepakketten
+
+Download de driver- en configuratieschermpakketten van de
+[nieuwste release](https://github.com/flarkflarkflark/phasex64-linux/releases),
+controleer ze met `SHA256SUMS` en installeer ze:
+
+```sh
+sudo pacman -S --needed linux-headers   # de headers van jouw kernel, zie hieronder
+v=0.9.1
+base=https://github.com/flarkflarkflark/phasex64-linux/releases/download/v$v
+curl -L --remote-name-all "$base/SHA256SUMS" \
+  "$base/snd-usb-phasex64-dkms-$v-1-any.pkg.tar.zst" \
+  "$base/phasex64-panel-$v-1-any.pkg.tar.zst"
+sha256sum -c --ignore-missing SHA256SUMS   # elk bestand moet "OK" geven
+sudo pacman -U "snd-usb-phasex64-dkms-$v-1-any.pkg.tar.zst" \
+  "phasex64-panel-$v-1-any.pkg.tar.zst"
+```
+
+- Gebruik het headerspakket van je kernel: `linux-lts-headers`,
+  `linux-zen-headers`, `linuxXYZ-headers` op Manjaro, ... `dkms` komt mee
+  als afhankelijkheid.
+- Eerst downloaden, dan de lokale bestanden installeren: de pakketten zijn
+  niet met GPG ondertekend, en met de standaardinstellingen van Arch
+  weigert `pacman -U` niet-ondertekende pakketten als URL (als lokaal
+  bestand accepteert hij ze wel). `SHA256SUMS` is in plaats daarvan de
+  controle.
+
+Daarna de kaart uit- en weer inpluggen, of de module direct laden, en het
+configuratiescherm starten via het applicatiemenu ("PHASE X64 USB") of
+met `phasex64-panel`:
+
+```sh
+sudo modprobe snd-usb-phasex64
+cat /sys/module/snd_usb_phasex64/version   # 0.9.1
+```
+
+Optioneel, voor JACK/REAPER: het WirePlumber-profiel. Lees eerst
+[PipeWire / JACK](linux/README.nl.md#pipewire--jack) - het geldt voor
+alle gebruikers op de machine (het verandert alleen hoe de PHASE X64
+wordt behandeld). In dezelfde shell als hierboven:
+
+```sh
+curl -L -O "$base/phasex64-wireplumber-$v-1-any.pkg.tar.zst"
+sha256sum -c --ignore-missing SHA256SUMS
+sudo pacman -U "phasex64-wireplumber-$v-1-any.pkg.tar.zst"
+systemctl --user restart wireplumber
+```
+
+Bijwerken: hetzelfde met de nieuwere versie; verwijderen:
+`sudo pacman -R snd-usb-phasex64-dkms phasex64-panel phasex64-wireplumber`.
+
+### 2. AUR
+
+`snd-usb-phasex64-dkms`, `phasex64-panel` en `phasex64-wireplumber`
+(pakketbasis `phasex64`) - binnenkort.
+
+<a id="andere-distributies"></a>
+
+### 3. Elke andere distributie: release-tarball + DKMS
+
+```sh
+v=0.9.1
+base=https://github.com/flarkflarkflark/phasex64-linux/releases/download/v$v
+curl -L --remote-name-all "$base/SHA256SUMS" "$base/phasex64-linux-$v.tar.gz"
+sha256sum -c --ignore-missing SHA256SUMS   # moet "OK" geven
+tar xzf "phasex64-linux-$v.tar.gz"
+cd "phasex64-linux-$v"
+scripts/install-dkms.sh --dry-run   # vereisten controleren, stappen tonen
+sudo scripts/install-dkms.sh
+sudo modprobe snd-usb-phasex64      # of de kaart uit- en weer inpluggen
+```
+
+Het script controleert of dkms, make, gcc en de headers van je draaiende
+kernel aanwezig zijn, en noemt de pakketten voor apt, dnf, zypper of
+pacman als er iets ontbreekt. DKMS bouwt de module na elke kernelupdate
+opnieuw. Verwijderen met `sudo scripts/uninstall-dkms.sh`. Details:
+[Installeren op andere distributies](linux/README.nl.md#installeren-op-andere-distributies).
+
+**Secure Boot:** met Secure Boot aan laden alleen ondertekende modules;
+een niet-ondertekende faalt met `Key was rejected by service`. DKMS
+ondertekent de module, en de sleutel moet één keer worden ingeschreven
+(MOK) bij een herstart - zie
+[Secure Boot](linux/README.nl.md#secure-boot). Controleren met
+`mokutil --sb-state`.
+
+**Configuratiescherm:** installeer de afhankelijkheden en start
+`linux/phasex64-panel/phasex64-panel` vanuit de uitgepakte map
+([menu-item en details](linux/README.nl.md#configuratiescherm-zonder-pakket)).
+
+| Distributie | Vereist | Optioneel: BUFFER-regeling |
+|---|---|---|
+| Debian, Ubuntu | `python3 python3-tk alsa-utils` | `pipewire-bin` |
+| Fedora | `python3 python3-tkinter alsa-utils` | `pipewire-utils` |
+| openSUSE | `python3 python3-tk alsa-utils` | `pipewire-tools` |
+| Arch | `python tk alsa-utils` | `pipewire` |
+
+`setpriv` uit util-linux (bijna overal al geïnstalleerd) wordt ook
+gebruikt als het er is.
+
+### 4. Vanuit de broncode (ontwikkelaars)
+
+```sh
+git clone https://github.com/flarkflarkflark/phasex64-linux.git
+cd phasex64-linux
+```
+
+Bouw daarna op Arch-gebaseerde distributies de pakketten zelf
+(eerst `sudo pacman -S --needed base-devel dkms linux-headers`):
+
+```sh
+cd linux
+makepkg -s
+sudo pacman -U snd-usb-phasex64-dkms-*.pkg.tar.zst phasex64-panel-*.pkg.tar.zst
+```
+
+of, overal, `sudo scripts/install-dkms.sh` vanuit de checkout, of bouw de
+module met de hand met `make` - zie
+[Installeren op Arch Linux](linux/README.nl.md#installeren-op-arch-linux).
+De volledige handleiding staat in [linux/README.nl.md](linux/README.nl.md).
 
 ## Schermafbeeldingen
 
@@ -192,96 +337,10 @@ PipeWire-nodes gesuspend), dus hij laat niet zien of er audio loopt.
   opnamestream is genoeg). De MIDI-code van de driver hangt daar niet van
   af; het apparaat wel.
 
-## Snel aan de slag (Arch Linux / Manjaro)
-
-```sh
-sudo pacman -S --needed base-devel dkms linux-headers git   # headers voor jouw kernel
-git clone https://github.com/flarkflarkflark/phasex64-linux.git
-cd phasex64-linux/linux
-makepkg -s
-sudo pacman -U snd-usb-phasex64-dkms-*.pkg.tar.zst phasex64-panel-*.pkg.tar.zst
-```
-
-Installeer de headers die bij je kernel horen (bijvoorbeeld
-`linux-zen-headers`, of `linuxXYZ-headers` op Manjaro). DKMS bouwt dan
-de module, ook na elke kernelupdate.
-
-Daarna de kaart uit- en weer inpluggen, of de module direct laden:
-
-```sh
-sudo modprobe snd-usb-phasex64
-cat /sys/module/snd_usb_phasex64/version   # 0.9.0
-```
-
-Start het configuratiescherm via het applicatiemenu ("PHASE X64 USB") of
-met `phasex64-panel`.
-
-Optioneel, voor JACK/REAPER: het WirePlumber-profiel. Lees eerst
-[PipeWire / JACK](linux/README.nl.md#pipewire--jack) - het verandert het
-gedrag van WirePlumber voor de hele machine.
-
-```sh
-sudo pacman -U phasex64-wireplumber-*.pkg.tar.zst
-systemctl --user restart wireplumber
-```
-
-De volledige handleiding staat in [linux/README.nl.md](linux/README.nl.md).
-
-**AUR:** `snd-usb-phasex64-dkms`, `phasex64-panel` en
-`phasex64-wireplumber` (pakketbasis `phasex64`) - binnenkort.
-
-## Andere distributies
-
-Elke push bouwt de module in CI tegen de eigen kernelheaders van de
-distributies
-([buildstatus](https://github.com/flarkflarkflark/phasex64-linux/actions/workflows/build.yml)):
-Arch Linux, Debian stable, Ubuntu 24.04 en 22.04, en Fedora - kernels
-7.2, 6.12, 6.8, 5.15 en 7.2 op 2026-10-22. Dat is alleen een buildtest;
-op hardware is de driver tot nu toe alleen op Arch-gebaseerde systemen
-gedraaid.
-
-**Driver**, met DKMS (na elke kernelupdate opnieuw gebouwd). Het script
-controleert of dkms, make, gcc en de headers van je draaiende kernel
-aanwezig zijn, en noemt de pakketten voor apt, dnf, zypper of pacman als
-er iets ontbreekt:
-
-```sh
-git clone https://github.com/flarkflarkflark/phasex64-linux.git
-cd phasex64-linux
-scripts/install-dkms.sh --dry-run   # vereisten controleren, stappen tonen
-sudo scripts/install-dkms.sh
-sudo modprobe snd-usb-phasex64      # of de kaart uit- en weer inpluggen
-```
-
-Verwijderen met `sudo scripts/uninstall-dkms.sh`. Gebruik op
-Arch-gebaseerde distributies in plaats daarvan het pakket (zie Snel aan
-de slag).
-
-**Secure Boot:** met Secure Boot aan laden alleen ondertekende modules;
-een niet-ondertekende faalt met `Key was rejected by service`. DKMS
-ondertekent de module, en de sleutel moet één keer worden ingeschreven
-(MOK) bij een herstart - zie
-[Secure Boot](linux/README.nl.md#secure-boot). Controleren met
-`mokutil --sb-state`.
-
-**Configuratiescherm:** installeer de afhankelijkheden en start
-`linux/phasex64-panel/phasex64-panel` vanuit de checkout
-([menu-item en details](linux/README.nl.md#configuratiescherm-zonder-pakket)).
-
-| Distributie | Vereist | Optioneel: BUFFER-regeling |
-|---|---|---|
-| Debian, Ubuntu | `python3 python3-tk alsa-utils` | `pipewire-bin` |
-| Fedora | `python3 python3-tkinter alsa-utils` | `pipewire-utils` |
-| openSUSE | `python3 python3-tk alsa-utils` | `pipewire-tools` |
-| Arch | `python tk alsa-utils` | `pipewire` |
-
-`setpriv` uit util-linux (bijna overal al geïnstalleerd) wordt ook
-gebruikt als het er is.
-
 ## Bekende beperkingen
 
-- **MIDI alleen terwijl audio loopt.** Zie hierboven; met het
-  WirePlumber-profiel blijft de stream open, dus blijft MIDI werken.
+- **MIDI alleen terwijl audio loopt.** Zie "Gemeten met deze driver"; met
+  het WirePlumber-profiel blijft de stream open, dus blijft MIDI werken.
 - **Schakelaars moeten kloppen.** De Aux/Phono-schakelaar voor Ch.1/2 en
   Ch.3/4 moet passen bij de opnamebron die in het configuratiescherm is
   gekozen; de driver kan de schakelaars niet lezen.
