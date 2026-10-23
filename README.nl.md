@@ -137,6 +137,24 @@ Aansluitingen op het exemplaar dat voor dit project is gebruikt:
   Aux/Phono. Die zijn puur hardware; de driver kan ze niet lezen of
   instellen.
 
+![Voorpaneel van de PHASE X64 USB: gainknoppen met de leds +48V, Run en Clip, de Phono/Aux-RCA-ingangen, de aardklem daaronder, de combo-aansluiting van Ch.1 en de Phones- en Hi-Z/Line-jacks](docs/hardware/phasex64-front.jpg)
+
+*Voorkant. De aardklem (⏚) onderaan, tussen de RCA-ingangen en de
+combo-aansluiting van Ch.1, is voor de aardedraad van de platenspeler; de
+rode "Run"-led betekent verbonden via USB / stroom aan.*
+
+![Achterpaneel: voeding en USB, MIDI-uitgang en -ingang, S/PDIF uit en in, Out 3/4 (RCA), de twee inserts en Out 1/2](docs/hardware/phasex64-back.jpg)
+
+*Achterkant. Voeding, USB, MIDI, S/PDIF, Out 3/4, inserts, Out 1/2.*
+
+![Zijkant van het apparaat met zes schuifschakelaars: 48V, Ch.1 Line/Mic, Ch.2 Line/HiZ, Phones Ch. 1/2 of 3/4, Ch.1/2 Aux/Phono, Ch.3/4 Aux/Phono](docs/hardware/phasex64-side.jpg)
+
+*Zijkant. De schakelaars die puur hardware zijn: 48 V, Ch.1 Line/Mic,
+Ch.2 Line/Hi-Z, koptelefoonbron, Ch.1/2 en Ch.3/4 Aux/Phono.*
+
+Foto's: het eigen exemplaar van de auteur, CC BY 4.0 (zie
+[docs/hardware/](docs/hardware/README.md)).
+
 **Platenspeler:** sluit de aardedraad van de platenspeler aan op de
 aardklem (⏚) aan de voorkant, tussen de RCA-ingangen en de
 combo-aansluiting van Ch.1, om brom te voorkomen.
@@ -314,5 +332,8 @@ before it counted.
 
 ## Licentie
 
-GPL-2.0-only - zie [LICENSE](LICENSE). De reverse-engineeringnotities
-staan in [analysis/](analysis/README.md).
+GPL-2.0-only - zie [LICENSE](LICENSE) - behalve de foto's in
+[docs/hardware/](docs/hardware/README.md), die © 2026 flarkflarkflark
+zijn en vallen onder
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.nl). De
+reverse-engineeringnotities staan in [analysis/](analysis/README.md).

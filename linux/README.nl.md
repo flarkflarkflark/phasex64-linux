@@ -719,4 +719,5 @@ daarvan op `dmesg | grep -iE "status read|0x49"`.
 
 De driver, het configuratiescherm en al het overige in deze repository
 vallen onder de GNU General Public License, alleen versie 2
-(`GPL-2.0-only`) - zie `../LICENSE`.
+(`GPL-2.0-only`) - zie `../LICENSE` - behalve de hardwarefoto's in
+`../docs/hardware/`, die onder CC BY 4.0 vallen (zie de README daar).

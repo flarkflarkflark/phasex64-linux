@@ -128,6 +128,24 @@ Connections on the unit used for this project:
   source 1/2 or 3/4, Ch.1/2 Aux/Phono, Ch.3/4 Aux/Phono. These are
   hardware-only; the driver can't read or set them.
 
+![Front panel of the PHASE X64 USB: gain knobs with +48V, Run and Clip LEDs, the Phono/Aux RCA inputs, the ground terminal below them, the Ch.1 combo socket and the Phones and Hi-Z/Line jacks](docs/hardware/phasex64-front.jpg)
+
+*Front. The ground terminal (⏚) at the bottom, between the RCA inputs
+and the Ch.1 combo socket, takes the turntable's ground wire; the red
+"Run" LED means connected over USB / powered.*
+
+![Rear panel: power and USB sockets, MIDI output and input, S/PDIF out and in, Out 3/4 RCA, the two inserts and Out 1/2](docs/hardware/phasex64-back.jpg)
+
+*Rear. Power, USB, MIDI, S/PDIF, Out 3/4, inserts, Out 1/2.*
+
+![Side of the unit with six slide switches: 48V, Ch.1 Line/Mic, Ch.2 Line/HiZ, Phones Ch. 1/2 or 3/4, Ch.1/2 Aux/Phono, Ch.3/4 Aux/Phono](docs/hardware/phasex64-side.jpg)
+
+*Side. The hardware-only switches: 48 V, Ch.1 Line/Mic, Ch.2 Line/Hi-Z,
+headphone source, Ch.1/2 and Ch.3/4 Aux/Phono.*
+
+Photos: the author's own unit, CC BY 4.0 (see
+[docs/hardware/](docs/hardware/README.md)).
+
 **Turntable:** connect the turntable's ground wire to the ground
 terminal (⏚) on the front, between the RCA inputs and the Ch.1 combo
 socket, to avoid hum.
@@ -300,5 +318,8 @@ before it counted.
 
 ## Licence
 
-GPL-2.0-only - see [LICENSE](LICENSE). The reverse-engineering notes are
-in [analysis/](analysis/README.md).
+GPL-2.0-only - see [LICENSE](LICENSE) - except the photos in
+[docs/hardware/](docs/hardware/README.md), which are © 2026
+flarkflarkflark, licensed
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The
+reverse-engineering notes are in [analysis/](analysis/README.md).
