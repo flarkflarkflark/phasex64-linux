@@ -1,14 +1,18 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Builds the release assets (source tarball, the three arch=any Arch
 # packages, SHA256SUMS) and, for a pushed v* tag, publishes them as a
-# GitHub release. Run it by hand with dry-run on to get the assets as a
-# workflow artifact without creating anything. No prebuilt kernel module
-# is ever built or attached: DKMS builds the driver on the user's machine.
+# GitHub release. A push to a release/* branch, or a manual run with
+# dry-run on, only builds the assets and uploads them as a workflow
+# artifact. No prebuilt kernel module is ever built or attached: DKMS
+# builds the driver on the user's machine.
 name: release
 
 on:
   push:
     tags: ["v*"]
+    # Dry run of the assets on release branches (workflow_dispatch only
+    # works once this file is on the default branch).
+    branches: ["release/**"]
   workflow_dispatch:
     inputs:
       dry-run:
