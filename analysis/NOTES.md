@@ -12,7 +12,13 @@
 **Front**: Phono/Aux RCA inputs for both Ch.1/2 and Ch.3/4; Mic/Line
 XLR-combo jack (Ch.1) with its own Mic/Line gain knob, a +48V LED and a
 clip LED; HiZ/Line 1/4" jack (Ch.2) with its own gain knob and a clip
-LED; headphone jack with volume knob.
+LED; headphone jack with volume knob; a ground terminal (⏚) between the
+RCA inputs and the Ch.1 combo socket (for a turntable's ground wire,
+against hum); a "Run" LED next to the Hi-Z gain knob.
+
+"Run" LED = connected over USB / powered. Hardware-verified (2026-10-22):
+it stays lit with the driver loaded while no PCM stream is running (both
+PCMs closed, PipeWire nodes suspended) - not a stream-state indicator.
 
 **Rear**: Power (9V DC barrel), USB-B, MIDI Out/In (5-pin DIN), Digital
 (S/PDIF coax) Out/In, Outputs Ch.3/4 (RCA), Inserts (MIC/Line for Ch.1 +
@@ -1707,3 +1713,29 @@ dependencies - both tools ship in the `pipewire` package):
 (`default.clock.quantum`, plus `default.clock.min-quantum` when the
 current minimum is above the chosen size). That's a default, not a
 forced value: an application may still request a larger quantum.
+
+## Other kernels and distributions (2026-10-22)
+
+**Second machine:** EndeavourOS, kernel 6.18.57-lts, a different AMD
+xHCI controller than the first machine, the PHASE X64 connected through
+a USB hub next to other USB audio devices. The driver builds on this
+6.18 LTS kernel (DKMS also built it for 7.2.11 on the same machine),
+loads, and enumerates at high speed without errors. Playback and capture
+not tested on this machine yet. Still one unit.
+
+**CI build matrix** (`.github/workflows/build.yml`, build only, no
+hardware): `make -C <headers> M=... W=1 modules` against each
+distribution's own kernel headers, in containers. Results on
+2026-10-22 (`.github/ci/module-build.sh`, the script CI runs):
+
+| Image | Kernel headers | Compiler | Result |
+|---|---|---|---|
+| archlinux:latest | 7.2.11-arch1-1 | gcc 16.2.1 | builds, 0 warnings |
+| debian:stable (13) | 6.12.113+deb13-amd64 | gcc 14.2.0 | builds, 0 warnings |
+| ubuntu:24.04 | 6.8.0-147-generic | gcc 13.3.0 | builds, 0 warnings |
+| ubuntu:22.04 | 5.15.0-198-generic | gcc 11.4.0 | builds, 0 warnings |
+| fedora:latest (44) | 7.2.11-200.fc44.x86_64 | gcc 16.2.1 | builds, 0 warnings |
+
+The driver compiles unchanged against all five (5.15 to 7.2), so no
+compatibility code is needed for them. That's a compile result only: the
+oldest kernel the driver has actually run on is 6.18.

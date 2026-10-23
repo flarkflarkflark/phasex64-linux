@@ -1,0 +1,95 @@
+# Maintainer: flarkflarkflark
+#
+# AUR build of the tagged release tarball. linux/PKGBUILD is the in-repo
+# variant that builds from a checkout instead; both produce the same split
+# packages from the same files. Keep pkgver/pkgrel and the package()
+# functions of the two in step.
+#
+# An AUR helper installs only the package you ask for, e.g.
+# `paru -S snd-usb-phasex64-dkms phasex64-panel`; phasex64-wireplumber stays
+# opt-in (it changes WirePlumber's behaviour machine-wide). With plain
+# makepkg, use `makepkg -s` and then `sudo pacman -U` on the packages you
+# want - `makepkg -si` would install all three.
+pkgbase=phasex64
+pkgname=(snd-usb-phasex64-dkms phasex64-panel phasex64-wireplumber)
+pkgver=0.9.0
+# Same pkgrel as linux/PKGBUILD for the same content, so a package built
+# from the checkout and the AUR one compare as equal versions.
+pkgrel=2
+pkgdesc="ALSA driver and control panel for the TerraTec/TerraSoniq PHASE X64 USB"
+arch=(any)
+url="https://github.com/flarkflarkflark/phasex64-linux"
+license=(GPL-2.0-only)
+makedepends=(gettext librsvg)
+source=("$pkgbase-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('08f57ebda9d4853f31526449f4672376bb632417a067eddee6e54702bcaa8dc7')
+
+_src() {
+  printf '%s/phasex64-linux-%s/linux' "$srcdir" "$pkgver"
+}
+
+build() {
+  local src
+  src="$(_src)"
+
+  # Translations (po/README.md) -> .mo files, packaged below.
+  for po in "$src"/phasex64-panel/po/*.po; do
+    lang="$(basename "$po" .po)"
+    install -d "$srcdir/locale/$lang/LC_MESSAGES"
+    msgfmt "$po" -o "$srcdir/locale/$lang/LC_MESSAGES/phasex64-panel.mo"
+  done
+
+  # icon.svg -> hicolor PNG sizes, packaged below.
+  for size in 16 24 32 48 64 128 256; do
+    install -d "$srcdir/icons/${size}x${size}/apps"
+    rsvg-convert -w "$size" -h "$size" \
+      "$src/phasex64-panel/icon.svg" \
+      -o "$srcdir/icons/${size}x${size}/apps/phasex64-panel.png"
+  done
+}
+
+package_snd-usb-phasex64-dkms() {
+  pkgdesc="ALSA driver for the TerraTec/TerraSoniq PHASE X64 USB (DKMS)"
+  depends=(dkms)
+  local src dst
+  src="$(_src)/snd-usb-phasex64"
+  dst="$pkgdir/usr/src/snd-usb-phasex64-$pkgver"
+  install -Dm644 "$src/phasex64.c" "$dst/phasex64.c"
+  install -Dm644 "$src/midi_in_filter.h" "$dst/midi_in_filter.h"
+  install -Dm644 "$src/Makefile" "$dst/Makefile"
+  install -Dm644 "$src/dkms.conf" "$dst/dkms.conf"
+}
+
+package_phasex64-panel() {
+  pkgdesc="Control panel for the TerraTec/TerraSoniq PHASE X64 USB"
+  # hicolor-icon-theme/gtk-update-icon-cache: gtk-update-icon-cache's own
+  # pacman hook refreshes the icon cache, see linux/PKGBUILD.
+  depends=(python tk alsa-utils hicolor-icon-theme gtk-update-icon-cache)
+  optdepends=('pipewire: BUFFER control (pw-metadata, pw-top)'
+              'snd-usb-phasex64-dkms: the driver this panel controls')
+  local src
+  src="$(_src)/phasex64-panel"
+  install -Dm755 "$src/phasex64-panel" "$pkgdir/usr/bin/phasex64-panel"
+  install -Dm644 "$src/phasex64-panel.desktop" \
+    "$pkgdir/usr/share/applications/phasex64-panel.desktop"
+  for mo in "$srcdir"/locale/*/LC_MESSAGES/phasex64-panel.mo; do
+    lang="$(basename "$(dirname "$(dirname "$mo")")")"
+    install -Dm644 "$mo" "$pkgdir/usr/share/locale/$lang/LC_MESSAGES/phasex64-panel.mo"
+  done
+  install -Dm644 "$src/icon.svg" \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/phasex64-panel.svg"
+  for png in "$srcdir"/icons/*/apps/phasex64-panel.png; do
+    size="$(basename "$(dirname "$(dirname "$png")")")"
+    install -Dm644 "$png" "$pkgdir/usr/share/icons/hicolor/$size/apps/phasex64-panel.png"
+  done
+}
+
+package_phasex64-wireplumber() {
+  pkgdesc="WirePlumber Pro Audio profile/rate/format pins for the PHASE X64 USB (optional)"
+  # Separate and opt-in: it changes session-manager behaviour for every
+  # user on the machine (see linux/PKGBUILD and linux/README.md,
+  # "PipeWire / JACK").
+  depends=(wireplumber)
+  install -Dm644 "$(_src)/wireplumber/51-phasex64-pro-audio.conf" \
+    "$pkgdir/usr/share/wireplumber/wireplumber.conf.d/51-phasex64-pro-audio.conf"
+}

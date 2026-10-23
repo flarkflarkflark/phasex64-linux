@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Builds the driver against each distribution's own kernel headers and runs
+# every test that doesn't need the device. Both jobs call scripts in
+# .github/ci/, which also run locally (see the comments at their top).
+name: build
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  module:
+    name: module (${{ matrix.image }})
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    # Set allow-failure on an entry to keep it visible without failing the
+    # workflow (e.g. an old kernel the driver doesn't build on yet).
+    continue-on-error: ${{ matrix.allow-failure }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - archlinux:latest
+          - debian:stable
+          - ubuntu:24.04
+          - ubuntu:22.04
+          - fedora:latest
+        allow-failure: [false]
+    steps:
+      - uses: actions/checkout@v5
+      - name: build against distribution kernel headers (W=1)
+        run: .github/ci/module-build.sh
+
+  tests:
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:24.04
+      # The job container's PID 1 is `tail -f /dev/null`, which never reaps
+      # orphans: processes the panel tests kill stay zombies and look alive
+      # to their kill(pid, 0) checks. --init runs a reaping init as PID 1.
+      options: --init
+    steps:
+      - name: install test dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git python3 python3-tk python3-numpy python3-scipy \
+            xvfb xauth gcc libc6-dev gettext shellcheck util-linux
+      - uses: actions/checkout@v5
+      - name: panel (Xvfb), py_compile, i18n, C unit test, models, shellcheck
+        run: .github/ci/tests.sh
