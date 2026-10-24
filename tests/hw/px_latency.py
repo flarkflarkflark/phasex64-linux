@@ -5,7 +5,7 @@
 
 Not run by the assistant: the `alsa` subcommand opens hw:PhaseX64 directly
 (raw ALSA, PipeWire stopped) and is for the user to run by hand. `gen`,
-`analyze`, `null` and `selftest` never touch any audio device. See
+`analyze`, `null`, `rpp` and `selftest` never touch any audio device. See
 tests/hw/README.md, "Latency measurement (px_latency.py)".
 
   gen       write the stimulus WAV (4ch, 24-bit): single-sample impulses on
@@ -24,8 +24,12 @@ tests/hw/README.md, "Latency measurement (px_latency.py)".
             Offset 0 = perfectly compensated; >0 = recording is late.
   null      null test of one analog channel between two saved captures,
             aligned on the digital tap (0 dB = unchanged check).
-  selftest  offline check of the analysis, `analyze` and `null` on synthetic
-            data; exits 0 only if every check passes.
+  rpp       REAPER's latency compensation error, from a saved project:
+            raw offset of each recorded take minus the shift REAPER applied
+            (SOFFS - POSITION). See tests/hw/reaper-latency/README.md.
+  selftest  offline check of the analysis, `analyze`, `null`, `rpp` and the
+            `alsa` I/O loop (against a simulated device) on synthetic data;
+            exits 0 only if every check passes.
 
 Channels are 1-based. Capture: 1/2 = In 1/2, 3/4 = In 3/4, 5/6 = the
 bit-exact internal digital tap of Out 1/2 (no cable involved, see
@@ -49,6 +53,7 @@ not report the requested rate.
 import argparse
 import ctypes
 import ctypes.util
+import gc
 import os
 import signal
 import struct
@@ -78,8 +83,8 @@ SPACING_S = 0.25    # impulse spacing - far larger than any plausible latency
 N_IMPULSES = 16
 AMPLITUDE = 0.5     # -6 dBFS single-sample impulse
 MAXLAG_S = 0.1      # search window, +-100 ms
-WAIT_MS = 500       # snd_pcm_wait() timeout per poll
-STALL_S = 2.0       # no capture data (or no playback space) for this long = abort
+POLL_MS = 1         # snd_pcm_wait() timeout per pass of the I/O loop
+STALL_S = 2.0       # no capture data and no playback space for this long = abort
 RATE_READBACK_DELAY_S = 0.5
 CLEANUP_SIGNALS = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}
 
@@ -356,6 +361,8 @@ class Alsa:
         L.snd_pcm_sw_params_set_start_threshold.argtypes = [vp, vp, ul]
         L.snd_pcm_avail_delay.argtypes = [vp, ctypes.POINTER(ctypes.c_long),
                                           ctypes.POINTER(ctypes.c_long)]
+        L.snd_pcm_avail.restype = ctypes.c_long
+        L.snd_pcm_avail.argtypes = [vp]
         for fn in ("snd_pcm_start", "snd_pcm_drop", "snd_pcm_close", "snd_pcm_unlink"):
             getattr(L, fn).argtypes = [vp]
         L.snd_pcm_link.argtypes = [vp, vp]
@@ -408,26 +415,6 @@ class Alsa:
         finally:
             L.snd_pcm_sw_params_free(sp)
 
-    def wait(self, h, what):
-        """Block (in WAIT_MS slices, so signals get through) until `h` is
-        ready; raises on xrun, on STALL_S without progress, or on error."""
-        waited = 0.0
-        while True:
-            r = self.lib.snd_pcm_wait(h, WAIT_MS)
-            if r > 0:
-                return
-            if r == 0:
-                waited += WAIT_MS / 1000
-                if waited >= STALL_S:
-                    raise RuntimeError(f"{what}: no progress for {STALL_S:.0f} s "
-                                       "(device stalled?) - run invalid")
-                continue
-            if r == -EINTR:
-                continue
-            if r in (-EPIPE, -ESTRPIPE):
-                raise RuntimeError(f"{what}: xrun - run invalid")
-            self.chk(r, f"{what}: snd_pcm_wait")
-
     def extra_delay(self, h, playback, buffer_frames):
         """What the driver reports beyond the ring buffer (runtime->delay)."""
         avail, delay = ctypes.c_long(), ctypes.c_long()
@@ -451,54 +438,91 @@ def run_once(alsa, args, period, periods, x):
         alsa.chk(L.snd_pcm_link(cap, play), "snd_pcm_link")
         linked = True
 
+        # Capture: exactly `total` frames, read straight into one
+        # preallocated buffer. Playback: the stimulus plus enough silence
+        # that the top-up below can never run dry before capture is done.
         total = len(x) + buf + int(MAXLAG_S * rate)
-        out = np.zeros((total + buf, PLAY_CH))
+        pframes = total + buf + rate // 2
+        out = np.zeros((pframes, PLAY_CH))
         out[:len(x)] = x
         pdata = to_s24_3le(out.reshape(-1))
         pbuf = ctypes.create_string_buffer(pdata, len(pdata))
-        pbase = ctypes.addressof(pbuf)
-        pf = PLAY_CH * 3
-        cbuf = (ctypes.c_int32 * (CAP_CH * period))()
-        carr = np.ctypeslib.as_array(cbuf)
-        captured = []
+        pbase, pf = ctypes.addressof(pbuf), PLAY_CH * 3
+        cbuf = (ctypes.c_int32 * (total * CAP_CH))()
+        cbase, cf = ctypes.addressof(cbuf), CAP_CH * 4
+        state = {"wpos": 0, "got": 0}
 
-        def write(frames, wpos, what):
-            done = 0
-            while done < frames:
-                w = L.snd_pcm_writei(play, ctypes.c_void_p(pbase + (wpos + done) * pf),
-                                     frames - done)
+        def avail(h, what):
+            a = L.snd_pcm_avail(h)
+            if a in (-EPIPE, -ESTRPIPE):
+                raise RuntimeError(f"{what} xrun - run invalid")
+            return alsa.chk(a, f"{what} avail")
+
+        def top_up():
+            """Fill playback to the brim, independent of capture (the old
+            loop wrote only as many frames as it had just read, so the fill
+            level sank by the capture pipeline's lag - the 64x2 underruns)."""
+            moved = False
+            while state["wpos"] < pframes:
+                n = min(avail(play, "playback"), pframes - state["wpos"])
+                if n <= 0:
+                    break
+                w = L.snd_pcm_writei(play, ctypes.c_void_p(pbase + state["wpos"] * pf), n)
                 if w == -EAGAIN:
-                    alsa.wait(play, what)
-                    continue
+                    break
                 if w in (-EPIPE, -ESTRPIPE):
-                    raise RuntimeError(f"{what}: playback underrun (xrun) - run invalid")
-                alsa.chk(w, what)
-                done += w
-            return done
+                    raise RuntimeError("playback underrun (xrun) - run invalid")
+                state["wpos"] += alsa.chk(w, "writei")
+                moved = True
+            return moved
 
-        # prefill the whole playback buffer, then one linked start
-        wpos = write(buf, 0, "prefill")
-        alsa.chk(L.snd_pcm_start(play), "snd_pcm_start (linked)")
-        t_start = time.monotonic()
-        extra = None
-        got = 0
-        while got < total:
-            alsa.wait(cap, "capture")
-            r = L.snd_pcm_readi(cap, cbuf, period)
-            if r == -EAGAIN:
-                continue
-            if r in (-EPIPE, -ESTRPIPE):
-                raise RuntimeError("capture overrun (xrun) - run invalid")
-            alsa.chk(r, "readi")
-            captured.append(carr[:r * CAP_CH].copy())
-            got += r
-            wpos += write(r, wpos, "playback")
-            if extra is None and time.monotonic() - t_start > 0.3:
-                extra = (alsa.extra_delay(play, True, buf), alsa.extra_delay(cap, False, buf))
-                print(f"  ALSA rate: playback {proc_rate(args.card, 'pcm0p')}, "
-                      f"capture {proc_rate(args.card, 'pcm0c')}")
-        c = np.concatenate(captured).reshape(-1, CAP_CH) / float(1 << 31)
-        return c, extra
+        def drain():
+            moved = False
+            while state["got"] < total:
+                n = min(avail(cap, "capture"), total - state["got"])
+                if n <= 0:
+                    break
+                r = L.snd_pcm_readi(cap, ctypes.c_void_p(cbase + state["got"] * cf), n)
+                if r == -EAGAIN:
+                    break
+                if r in (-EPIPE, -ESTRPIPE):
+                    raise RuntimeError("capture overrun (xrun) - run invalid")
+                state["got"] += alsa.chk(r, "readi")
+                moved = True
+            return moved
+
+        # No allocations, no prints, no garbage collection inside the
+        # real-time loop - everything is reported after the run.
+        gc_was_enabled = gc.isenabled()
+        gc.disable()
+        try:
+            top_up()                       # prefill the whole buffer
+            alsa.chk(L.snd_pcm_start(play), "snd_pcm_start (linked)")
+            extra, rates, idle_ms = None, None, 0
+            while state["got"] < total:
+                # Wakes on a capture period, or after POLL_MS at the latest:
+                # the driver moves its pointers once per 1 ms URB, so a 1 ms
+                # poll sees every step. Top-up and drain run on every pass.
+                r = L.snd_pcm_wait(cap, POLL_MS)
+                if r in (-EPIPE, -ESTRPIPE):
+                    raise RuntimeError("capture xrun - run invalid")
+                if r < 0 and r != -EINTR:
+                    alsa.chk(r, "snd_pcm_wait")
+                moved = drain()
+                moved = top_up() or moved
+                idle_ms = 0 if moved else idle_ms + POLL_MS
+                if idle_ms >= STALL_S * 1000:
+                    raise RuntimeError(f"no progress for {STALL_S:.0f} s (device stalled?) "
+                                       "- run invalid")
+                if extra is None and state["got"] >= 0.3 * rate:
+                    extra = (alsa.extra_delay(play, True, buf),
+                             alsa.extra_delay(cap, False, buf))
+                    rates = (proc_rate(args.card, "pcm0p"), proc_rate(args.card, "pcm0c"))
+        finally:
+            if gc_was_enabled:
+                gc.enable()
+        c = np.ctypeslib.as_array(cbuf).reshape(-1, CAP_CH) / float(1 << 31)
+        return c, extra, rates
     finally:
         # Every exit path, exceptions and signals included: drop, unlink,
         # close. Each step separately, so one failure can't skip the rest;
@@ -549,10 +573,12 @@ def cmd_alsa(args):
         for rep in range(args.reps):
             print(f"\nrate {args.rate}  period {period} x {periods}  run {rep + 1}/{args.reps}")
             try:
-                c, extra = run_once(alsa, args, period, periods, x)
+                c, extra, rates = run_once(alsa, args, period, periods, x)
             except RuntimeError as e:
                 print(f"  FAILED: {e}")
                 continue
+            if rates:
+                print(f"  ALSA rate: playback {rates[0]}, capture {rates[1]}")
             rate_ok = verify_rate(args)
             if args.save:
                 write_wav24(f"{args.save}-{args.rate}-{period}x{periods}-{rep + 1}.wav",
@@ -580,8 +606,8 @@ def cmd_alsa(args):
 
 def cmd_gen(args):
     x, pos = stimulus(args.rate)
-    write_wav24(args.out, x, args.rate)
-    print(f"wrote {args.out}: {len(x)} frames @ {args.rate}, impulses at frames "
+    write_wav24(args.out, x[:, :args.channels], args.rate)
+    print(f"wrote {args.out}: {args.channels} ch, {len(x)} frames @ {args.rate}, impulses at frames "
           f"{pos[0]}..{pos[-1]} every {pos[1] - pos[0]}")
 
 
@@ -628,6 +654,198 @@ def cmd_null(args):
     print("compare against the same command on two baseline runs (A vs A'): that "
           "residual is the noise floor of the null itself")
     return shift, level, resid
+
+
+def parse_rpp(path):
+    """Tracks of a saved REAPER project: [{name, items: [{position, soffs,
+    playrate, file, takes}]}]. Only what `rpp` needs; FILE paths are made
+    absolute relative to the project's own directory."""
+    base = os.path.dirname(os.path.abspath(path))
+    tracks, stack = [], []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for raw in f:
+            line = raw.strip()
+            if line.startswith("<"):
+                kind = line[1:].split(" ", 1)[0]
+                stack.append(kind)
+                if kind == "TRACK":
+                    tracks.append({"name": "", "items": []})
+                elif kind == "ITEM" and tracks:
+                    tracks[-1]["items"].append({"position": 0.0, "soffs": 0.0,
+                                                "playrate": 1.0, "file": None, "takes": 1})
+                continue
+            if line == ">":
+                if stack:
+                    stack.pop()
+                continue
+            key, _, rest = line.partition(" ")
+            if not stack or not tracks:
+                continue
+            if stack[-1] == "TRACK" and key == "NAME":
+                tracks[-1]["name"] = rest.strip().strip('"')
+            elif "ITEM" in stack and tracks[-1]["items"]:
+                item = tracks[-1]["items"][-1]
+                if stack[-1] == "ITEM" and key == "POSITION":
+                    item["position"] = float(rest.split()[0])
+                elif stack[-1] == "ITEM" and key == "SOFFS" and item["takes"] == 1:
+                    item["soffs"] = float(rest.split()[0])
+                elif stack[-1] == "ITEM" and key == "PLAYRATE" and item["takes"] == 1:
+                    item["playrate"] = float(rest.split()[0])
+                elif stack[-1] == "ITEM" and key == "TAKE":
+                    item["takes"] += 1
+                elif key == "FILE" and item["file"] is None:
+                    name = rest.strip().split('"')[1] if rest.strip().startswith('"') \
+                        else rest.strip().split()[0]
+                    item["file"] = name if os.path.isabs(name) else os.path.join(base, name)
+    return tracks
+
+
+def cmd_rpp(args):
+    """REAPER's own latency compensation error, straight from the saved
+    project: the recorded WAV's raw offset against the stimulus, minus the
+    shift REAPER applied to the item (SOFFS - POSITION). Needs no render.
+    Returns {track: error_samples} (first item of each track)."""
+    tracks = {t["name"]: t for t in parse_rpp(args.project)}
+    results = {}
+    for name in args.tracks.split(","):
+        t = tracks.get(name)
+        if not t or not t["items"]:
+            print(f"{name}: no track/item of that name in {args.project}")
+            continue
+        for n, item in enumerate(t["items"]):
+            if not item["file"] or not os.path.exists(item["file"]):
+                print(f"{name} item {n + 1}: recorded file missing ({item['file']})")
+                continue
+            sig, rate = read_wav(item["file"])
+            x, pos = stimulus(rate)
+            print(f"{name} item {n + 1}: {os.path.basename(item['file'])} @ {rate} Hz, "
+                  f"POSITION {item['position']:.6f} s, SOFFS {item['soffs']:.6f} s")
+            lag = report("raw recording", x[:, 0], sig[:, 0], pos, rate)[0]
+            comp = (item["soffs"] - item["position"]) * rate
+            err = lag - comp
+            warn = ""
+            if abs(item["playrate"] - 1.0) > 1e-9:
+                warn += f"  <-- PLAYRATE {item['playrate']} != 1"
+            if item["takes"] > 1:
+                warn += "  <-- several takes, first one used"
+            if abs(item["position"]) > 0.05:
+                warn += "  <-- recording did not start at 0 - restart from the beginning"
+            print(f"  REAPER compensation {comp:8.2f} samples; "
+                  f"remaining error {err:8.2f} samples ({err / rate * 1e3:.3f} ms){warn}")
+            results.setdefault(name, err)
+    return results
+
+
+class _SimLib:
+    """Stand-in for libasound, for the selftest only: a simulated device
+    in virtual time with the driver's shape - playback consumed in 1 ms
+    steps, capture delivered in 32-frame bulk URBs - whose capture ch5
+    carries the playback stream TAP frames late and ch3 TAP+ANALOG late.
+    Virtual time only advances inside snd_pcm_wait(), i.e. an ideal host:
+    this proves the I/O loop's logic and index bookkeeping, not real-time
+    behaviour."""
+    TAP, ANALOG, CAP_LAG, CAP_URB = 217, 53, 40, 32
+
+    def __init__(self, rate, buf, period):
+        self.rate, self.buf, self.period = rate, buf, period
+        self.t = 0                       # virtual time in frames since start
+        self.started = self.xrun = False
+        self.appl_p = self.appl_c = 0
+        self.play = np.zeros(rate * 20, dtype=np.int64)  # ch1 of every written frame
+
+    def hw_p(self):
+        return (self.t * 1000 // self.rate) * self.rate // 1000 if self.started else 0
+
+    def hw_c(self):
+        if not self.started or self.t < self.CAP_LAG:
+            return 0
+        return (self.t - self.CAP_LAG) // self.CAP_URB * self.CAP_URB
+
+    def check(self):
+        if self.hw_p() > self.appl_p or self.hw_c() - self.appl_c > self.buf:
+            self.xrun = True
+        return -EPIPE if self.xrun else 0
+
+    def snd_pcm_avail(self, h):
+        if self.check():
+            return -EPIPE
+        if h == "P":
+            return self.buf - (self.appl_p - self.hw_p())
+        return self.hw_c() - self.appl_c
+
+    def snd_pcm_writei(self, h, ptr, n):
+        a = self.snd_pcm_avail("P")
+        if a < 0:
+            return a
+        k = min(n, a)
+        if k <= 0:
+            return -EAGAIN
+        b = np.frombuffer(ctypes.string_at(ptr.value, k * PLAY_CH * 3), dtype=np.uint8)
+        b = b.reshape(k, PLAY_CH * 3)[:, :3].astype(np.int32)
+        v = b[:, 0] | (b[:, 1] << 8) | (b[:, 2] << 16)
+        self.play[self.appl_p:self.appl_p + k] = np.where(v >= 1 << 23, v - (1 << 24), v)
+        self.appl_p += k
+        return k
+
+    def snd_pcm_readi(self, h, ptr, n):
+        a = self.snd_pcm_avail("C")
+        if a < 0:
+            return a
+        k = min(n, a)
+        if k <= 0:
+            return -EAGAIN
+        frames = np.zeros((k, CAP_CH), dtype="<i4")
+        for col, lag in ((4, self.TAP), (2, self.TAP + self.ANALOG)):
+            idx = np.arange(self.appl_c, self.appl_c + k) - lag
+            ok = (idx >= 0) & (idx < self.appl_p)
+            frames[ok, col] = self.play[idx[ok]] << 8
+        ctypes.memmove(ptr.value, frames.tobytes(), frames.nbytes)
+        self.appl_c += k
+        return k
+
+    def snd_pcm_wait(self, h, ms):
+        if self.check():
+            return -EPIPE
+        need = self.appl_c + self.period
+        t_ready = self.CAP_LAG + -(-need // self.CAP_URB) * self.CAP_URB
+        t_end = self.t + max(1, ms * self.rate // 1000)
+        self.t = min(t_ready, t_end) if self.hw_c() < need else self.t
+        if self.check():
+            return -EPIPE
+        return 1 if self.hw_c() >= need else 0
+
+    def snd_pcm_avail_delay(self, h, avail, delay):
+        a = self.snd_pcm_avail(h)
+        avail._obj.value = a
+        delay._obj.value = self.buf - a if h == "P" else a
+        return 0
+
+    def snd_pcm_start(self, h):
+        self.started = True
+        return 0
+
+    def snd_pcm_link(self, a, b):
+        return 0
+
+    def snd_pcm_drop(self, h):
+        return 0
+
+    def snd_pcm_unlink(self, h):
+        return 0
+
+    def snd_pcm_close(self, h):
+        return 0
+
+    def snd_strerror(self, r):
+        return b"simulated error"
+
+
+class _SimAlsa(Alsa):
+    def __init__(self, rate, buf, period):     # pylint: disable=super-init-not-called
+        self.lib = _SimLib(rate, buf, period)
+
+    def open(self, dev, stream, fmt, ch, rate, period, periods):
+        return "P" if stream == SND_PCM_STREAM_PLAYBACK else "C"
 
 
 def _fractional_delay(sig, lag, pol=1):
@@ -695,6 +913,56 @@ def cmd_selftest(args):
     if not (shift == 0 and abs(level) < 1e-6 and resid < -150):
         failures.append("null identical")
 
+    # The real run_once() I/O loop against the simulated device, at the
+    # buffer sizes that xran on hardware (64x2) and a larger one.
+    print(f"\nrun_once on a simulated device (tap {_SimLib.TAP}, analog "
+          f"{_SimLib.TAP + _SimLib.ANALOG}; ideal host, so this checks logic, not timing):")
+    for sim_rate, period, periods in ((48000, 64, 2), (44100, 64, 2), (48000, 256, 2)):
+        sim = _SimAlsa(sim_rate, period * periods, period)
+        sx, spos = stimulus(sim_rate)
+        try:
+            c, extra, _ = run_once(sim, argparse.Namespace(rate=sim_rate, card="sim"),
+                                   period, periods, sx)
+        except RuntimeError as e:
+            failures.append(f"sim {sim_rate} {period}x{periods}: {e}")
+            print(f"  {sim_rate} {period}x{periods}: FAILED {e}")
+            continue
+        print(f"  {sim_rate} {period}x{periods}:")
+        tap = report("ch5 (tap)", sx[:, 0], c[:, 4], spos, sim_rate)
+        ana = report("ch3 (analog)", sx[:, 0], c[:, 2], spos, sim_rate)
+        if not (abs(tap[0] - _SimLib.TAP) < 0.01 and tap[3] == 0 and
+                abs(ana[0] - _SimLib.TAP - _SimLib.ANALOG) < 0.01 and extra == (0, 0)):
+            failures.append(f"sim {sim_rate} {period}x{periods}")
+
+    # ...and the simulator does detect an underrun (else the above is vacuous)
+    sim = _SimLib(48000, 128, 64)
+    sim.snd_pcm_start("P")
+    sim.snd_pcm_wait("C", 5)
+    if sim.snd_pcm_avail("P") != -EPIPE:
+        failures.append("sim does not detect underruns")
+    print(f"  simulator underrun check: {'ok' if sim.xrun else 'FAIL'}")
+
+    # rpp: a saved REAPER project whose recorded items are 270 (in3) and
+    # 217 (in5) samples late in the raw files, with REAPER having shifted
+    # both by 192 samples (SOFFS 0.004 s) -> remaining error 78 and 25.
+    m3 = np.zeros(n)
+    m3[270:] = ref[:n - 270]
+    m5 = np.zeros(n)
+    m5[217:] = ref[:n - 217]
+    os.makedirs(os.path.join(out_dir, "recorded"), exist_ok=True)
+    write_wav24(os.path.join(out_dir, "recorded", "in3.wav"), m3[:, None], rate)
+    write_wav24(os.path.join(out_dir, "recorded", "in5.wav"), m5[:, None], rate)
+    rpp_path = os.path.join(out_dir, "synthetic.rpp")
+    with open(rpp_path, "w", encoding="ascii") as f:
+        for name in ("in3", "in5"):
+            f.write(f'<TRACK\n  NAME {name}\n  <ITEM\n    POSITION 0\n    SOFFS 0.004\n'
+                    f'    PLAYRATE 1 1 0 -1 0 0.0025\n    <SOURCE WAVE\n'
+                    f'      FILE "recorded/{name}.wav"\n    >\n  >\n>\n')
+    print("\nrpp (synthetic project; expect remaining error 78.00 for in3, 25.00 for in5):")
+    res = cmd_rpp(argparse.Namespace(project=rpp_path, tracks="in3,in5"))
+    if not (abs(res.get("in3", 1e9) - 78) < 0.01 and abs(res.get("in5", 1e9) - 25) < 0.01):
+        failures.append("rpp")
+
     if tmp:
         tmp.cleanup()
     else:
@@ -710,6 +978,9 @@ def main():
     g = sub.add_parser("gen", help="write the stimulus WAV")
     g.add_argument("--rate", type=int, default=48000, choices=RATES)
     g.add_argument("--out", default="px_latency_stimulus.wav")
+    g.add_argument("--channels", type=int, default=PLAY_CH, choices=(1, 2, PLAY_CH),
+                   help="1 = mono (for REAPER: plays on both sides of a stereo track), "
+                        "2 = Out 1/2 only, 4 = all outputs (default)")
     a = sub.add_parser("alsa", help="raw-ALSA linked play+capture measurement "
                        "(opens the device - user only)")
     a.add_argument("--card", default="PhaseX64", help="ALSA card id (default %(default)s)")
@@ -736,12 +1007,16 @@ def main():
     nl.add_argument("b")
     nl.add_argument("--ch", type=int, default=3, help="1-based analog channel to null")
     nl.add_argument("--tap-ch", type=int, default=5, help="1-based tap channel for alignment")
-    st = sub.add_parser("selftest", help="offline check of analysis, analyze and null")
+    rp = sub.add_parser("rpp", help="REAPER's compensation error, from a saved project")
+    rp.add_argument("project", help="the saved .rpp with the recorded takes")
+    rp.add_argument("--tracks", default="in3,in5", help="track names (default %(default)s)")
+    st = sub.add_parser("selftest", help="offline check of analysis, analyze, null, rpp "
+                        "and the I/O loop (simulated device)")
     st.add_argument("--keep", default=None,
                     help="directory to keep the synthetic WAVs in (default: temporary)")
     args = ap.parse_args()
     cmds = {"gen": cmd_gen, "alsa": cmd_alsa, "analyze": cmd_analyze, "null": cmd_null,
-            "selftest": cmd_selftest}
+            "rpp": cmd_rpp, "selftest": cmd_selftest}
     try:
         cmds[args.cmd](args)
     except (KeyboardInterrupt, Interrupted) as e:

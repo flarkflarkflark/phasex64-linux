@@ -129,8 +129,16 @@ closes each invocation. What to look for:
 ### Other subcommands (offline, no device access)
 
 ```sh
-python3 "$PX" gen --out stim.wav                # stimulus, e.g. for REAPER
+python3 "$PX" gen --channels 1 --out stim.wav   # mono stimulus, e.g. for REAPER
 python3 "$PX" analyze take.wav --channels 1     # offsets in a recording rendered from t=0
 python3 "$PX" null A.wav B.wav --ch 3           # null test of two saved captures
+python3 "$PX" rpp project.rpp                   # REAPER's compensation error, saved project
 python3 "$PX" selftest --keep DIR               # also keeps the synthetic WAVs in DIR
 ```
+
+The selftest also runs the `alsa` subcommand's real I/O loop against a
+simulated device (virtual time, the driver's 1 ms playback / 32-frame
+capture shape): it proves the loop's logic and bookkeeping, not its
+real-time behaviour on hardware.
+
+For the REAPER check through pipewire-jack see `reaper-latency/README.md`.
