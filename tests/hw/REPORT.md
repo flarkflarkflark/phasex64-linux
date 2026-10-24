@@ -3010,3 +3010,133 @@ rare byte-loss mechanism (traced to between the device ACKing a USB OUT
 transfer and the bytes echoing back on IN) remains unexplained and
 un-fixed, not reproduced since the 5-URB change but not confirmed gone
 either.
+
+## Round-trip latency, raw ALSA (2026-10-24)
+
+First run of `tests/hw/px_latency.py` (`alsa` subcommand, commit
+`5ac51b1`), run by hand. Setup: driver 0.9.1, S/PDIF coax cable
+unplugged (`Digital Input Lock` = off, live read before the run), `Clock
+Source` = Internal, `In 3/4 Capture Source` = `Loopback 1/2`, `Direct 1/2`
+off, `PCM 1/2` on, PipeWire stopped (sockets included). Each run opens
+playback + capture on `hw:PhaseX64`, links them (`snd_pcm_link`), starts
+both in one trigger and plays 16 single-sample impulses (-6 dBFS) on Out
+1/2; the offset is where an impulse lands in the capture minus where it
+was in the playback stream, i.e. the delay the driver's pointer does not
+account for. Channels: ch 5 = bit-exact digital tap of Out 1/2 (USB and
+firmware pipeline only), ch 3 = Out 1/2's analog output via `Loopback
+1/2` (adds DAC + ADC). Every valid run passed the idle rate readback
+(`Digital Input Rate` = requested rate) and had a per-impulse spread of 0
+(all 16 impulses at the same offset - no drift or dropout inside a run).
+
+**Measured** (samples; `tap` = ch 5, `analog` = ch 3):
+
+| rate | buffer | run | tap | analog | analog - tap | driver-reported extra delay |
+|---|---|---|---|---|---|---|
+| 48000 | 64x2 | 1 | - | - | - | capture xrun, run invalid |
+| 48000 | 64x2 | 2 | 218 | 270.95 | 52.95 | 0 / 0 |
+| 48000 | 64x2 | 3 | 216 | 268.95 | 52.95 | 0 / 0 |
+| 48000 | 64x3 | 1 | 226 | 278.95 | 52.95 | 0 / 0 |
+| 48000 | 64x3 | 2 | 220 | 272.94 | 52.94 | 0 / 0 |
+| 48000 | 64x3 | 3 | 226 | 278.94 | 52.94 | 0 / 0 |
+| 48000 | 128x2 | 1 | 234 | 286.94 | 52.94 | 0 / 0 |
+| 48000 | 128x2 | 2 | 214 | 266.93 | 52.93 | 0 / 0 |
+| 48000 | 128x2 | 3 | 228 | 280.93 | 52.93 | 0 / 0 |
+| 48000 | 256x2 | 1 | 224 | 276.92 | 52.92 | 0 / 0 |
+| 48000 | 256x2 | 2 | 222 | 274.92 | 52.92 | 0 / 0 |
+| 48000 | 256x2 | 3 | 210 | 262.91 | 52.91 | 0 / 0 |
+| 48000 | 512x2 | 1 | 214 | 266.91 | 52.91 | 0 / 0 |
+| 48000 | 512x2 | 2 | 208 | 260.90 | 52.90 | 0 / 0 |
+| 48000 | 512x2 | 3 | 214 | 266.90 | 52.90 | 0 / 0 |
+| 44100 | 64x2 | 1, 2 | - | - | - | playback xrun, runs invalid |
+| 44100 | 64x2 | 3 | 188 | 240.87 | 52.87 | 0 / 0 |
+| 44100 | 256x2 | 1 | 224 | 276.86 | 52.86 | 0 / 0 |
+| 44100 | 256x2 | 2 | 210 | 262.85 | 52.85 | 0 / 0 |
+| 44100 | 256x2 | 3 | 181 | 233.84 | 52.84 | 0 / 0 |
+
+Summary: 48 kHz (14 valid runs) tap 208-234, mean 219.6 (4.33-4.88 ms,
+mean 4.57 ms), analog - tap 52.90-52.95; 44.1 kHz (4 valid runs) tap
+181-224, mean 200.8 (4.10-5.08 ms, mean 4.55 ms), analog - tap
+52.84-52.87. The driver reports 0 extra delay in both directions
+(`runtime->delay` is never set, see `analysis/NOTES.md`).
+
+**Split into two parts.**
+
+- *Sample-based, ~52.9 samples (measured):* analog - tap is the same in
+  samples at 44.1 and 48 kHz (52.86 vs 52.93), and constant to 0.05
+  samples across every buffer size and run. It is therefore set by the
+  converters' clocked filters, not by USB timing. *Inference:* the WM8776
+  datasheet gives typical digital-filter group delays of 22 (ADC) + 19
+  (DAC) = 41 samples (Table 17); the other ~12 samples are plausibly the
+  sigma-delta modulators, analog filtering and the I2S framing around the
+  codecs, but this measurement cannot attribute them.
+- *Time-based, ~4.55 ms (measured):* the tap offset is the same in time at
+  both rates (mean 4.57 vs 4.55 ms), not in samples (219.6 vs 200.8).
+  *Inference:* this is the USB pipeline - the driver keeps `PLAY_URBS` = 4
+  playback URBs of 1 ms in flight and advances its pointer when frames are
+  copied into an URB, not when they are played (3-4 ms), plus 32-frame
+  capture bulk URBs and whatever FIFO the device firmware keeps. Which
+  share of the 4.55 ms belongs to playback and which to capture is not
+  measurable with a round trip.
+- Neither part depends on the ALSA buffer size (64x2 ... 512x2): it is
+  latency below the driver's ALSA pointer, invisible to every client.
+
+**Run-to-run skew (measured):** the tap offset varies per stream start -
+standard deviation 7.4 samples at 48 kHz (range 26 samples = 0.54 ms),
+19.8 at 44.1 kHz (range 43 samples = 0.97 ms, 4 runs only) - while being
+exactly constant within a run. *Inference:* the phase between the
+playback URB schedule and the capture bulk stream is set anew at each
+transport start. Under PipeWire with `session.suspend-timeout-seconds = 0`
+the device starts once per session, so the skew is fixed for a session
+but differs between sessions; a fixed latency compensation can therefore
+only be right to about +-13 samples at 48 kHz.
+
+**xrun verdict: the measurement script, not the driver (inference, with
+these measured facts behind it).** The kernel log for the whole run
+window has no line from the driver or the USB core - only the 8 plug-in
+lines from before the runs (no rate warning, no watchdog, no URB error).
+That alone does not clear the driver, since an ALSA xrun is detected by
+the ALSA core and the driver logs nothing for it. The xruns occurred only
+at the smallest buffer, 64x2 = 128 frames (2.67 ms at 48 kHz, 2.90 ms at
+44.1 kHz); all 15 runs at 64x3 or larger were clean. The two 44.1 kHz
+underruns happened in the first 0.3 s (the run's 0.3 s status line never
+printed); the 48 kHz capture overrun happened later. The `5ac51b1` loop
+refilled playback with exactly as many frames as it had just read from
+capture, and capture data arrives later than playback is consumed (32-frame
+bulk URBs plus the device's own lag), so the playback fill sank to the
+buffer size minus that lag minus the read granularity minus the 1 ms
+consumption step - almost nothing at 128 frames. The capture overrun is
+consistent with a host-side pause of more than 2.67 ms (Python garbage
+collection, or the one status print plus `/proc` read the loop did at the
+0.3 s mark). The loop was rewritten afterwards (`11913ca`): playback is
+topped up to the full buffer on every pass, independent of capture; the
+loop polls at 1 ms, reads straight into a preallocated buffer, and prints
+and garbage-collects nothing until the run is over. That loop passes the
+selftest against a simulated device with the driver's 1 ms / 32-frame
+shape at 64x2, but a simulator has no real-time behaviour - **the 64x2
+runs still need one hardware re-run to confirm.**
+
+Side observation (measured, not investigated): the analog channel's peak
+level fell steadily over the session, -7.4 dBFS in the first valid run
+to -8.2 dBFS in the last 48 kHz run and -8.5 to -8.7 dBFS at 44.1 kHz,
+while the digital tap stayed at -6.0 dBFS. The analog - tap delay did not
+change with it (52.95 -> 52.90). Small analog drift (e.g. warm-up) or the
+44.1 kHz filters; irrelevant to the latency result.
+
+**Through PipeWire / REAPER (open, inference only).** By the PipeWire
+1.6.10 source, an ALSA node's port advertises 1 quantum
+(`spa/plugins/alsa/alsa-pcm-sink.c:910-913`, `alsa-pcm-source.c:856-859`)
+plus its headroom as `min_rate`/`max_rate` (`alsa-pcm.c:2111-2156`; for a
+BATCH device under timer scheduling the headroom gains one ALSA period,
+:2131-2132, and capture gets at least 32 frames, :2136-2137), and
+pipewire-jack reports exactly `quantum x nframes + rate + ns` to JACK
+clients (`pipewire-jack/src/pipewire-jack.c:6733-6771`). Both terms are
+real buffering PipeWire itself keeps in the ALSA ring. Nothing in that
+path knows about the ~4.55 ms + 52.9 samples measured here, and the ALSA
+plugin never calls `snd_pcm_delay()`. So by the source, REAPER on
+pipewire-jack should be ~270 samples late at 48 kHz, at every quantum -
+not the ~54 samples measured by hand earlier, which matches analog - tap
+alone. That points to the hand measurement having had the digital
+pipeline as its reference, or to REAPER compensating something beyond
+the JACK port latencies. `tests/hw/reaper-latency/` records In 3 and In 5
+in the same take to settle it: in5's error isolates the USB part, in3 -
+in5 the converter part.
