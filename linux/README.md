@@ -542,12 +542,24 @@ time budget (W/Q ≈ 0.07). 512 and 2048 weren't tested but lie within
 that range; sizes below 64 aren't offered. REAPER's title bar shows a
 new size only after playback is stopped and started again.
 
-**Recording offset in REAPER**: at 64, an analog loopback recording
-(Out 3/4 into Aux In 3/4) came back about 54 samples (≈1.1 ms) later
-than REAPER's own latency compensation accounts for. That is a first,
-approximate measurement. For sample-accurate overdubs, record a short
-loopback once, measure the difference, and enter it as REAPER's manual
-recording offset (Preferences → Audio → Recording).
+**Latency compensation in DAWs**: the driver does not report the
+interface's own delay to ALSA, and PipeWire's ALSA plugin never asks for
+it, so by default PipeWire and JACK applications compensate only for the
+buffers they know about. Measured, an analog loopback recording then
+comes back about 270 samples late (≈5.6 ms at 48 kHz: about 4.6 ms USB
+pipeline plus about 53 samples in the converters; the same at every
+buffer size). The optional `phasex64-wireplumber` package adds exactly
+that to the PHASE X64 nodes' latency (`latency.internal.*`), so REAPER
+on `pipewire-jack` compensates it itself and **needs no manual offset**.
+Measured at 64, 256 and 1024 samples with the values in place: the
+analog loopback recording landed between -0.7 and +0.4 ms of the right
+place (four takes). The USB part varies by about 1 ms between starts of
+the device, which no fixed value can remove; for sample-exact overdubs
+measure once more (`tests/hw/reaper-latency/`) and enter the rest as
+REAPER's manual offset (Preferences → Audio → Recording). Check that the
+values are live: `pw-dump | grep latency.internal`. Applications that
+use ALSA directly are not helped; the delay is not reported to them.
+Method and numbers: `tests/hw/REPORT.md`.
 
 ## Capture channel layout
 

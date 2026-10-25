@@ -25,7 +25,7 @@ Whenever `_("...")`-wrapped strings in `phasex64-panel` change:
 ```sh
 cd linux/phasex64-panel
 xgettext --language=Python --from-code=UTF-8 --keyword=_ \
-  --package-name=phasex64-panel --package-version=0.9.1 \
+  --package-name=phasex64-panel --package-version=0.9.2 \
   -o po/phasex64-panel.pot phasex64-panel
 ```
 

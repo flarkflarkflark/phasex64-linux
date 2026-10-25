@@ -1,0 +1,47 @@
+<REAPER_PROJECT 0.1 "7.71/linux-x86_64" 1761300000 0
+  RIPPLE 0
+  AUTOXFADE 129
+  SAMPLERATE 48000 0 0
+  RECORD_PATH "recorded" ""
+  <RECORD_CFG
+    ZXZhdxgAAQ==
+  >
+  MASTER_NCH 2 2
+  MASTER_VOLUME 1 0 -1 -1 1
+  <TRACK
+    NAME stim
+    VOLPAN 1 0 -1 -1 1
+    MUTESOLO 0 0 0
+    REC 0 0 0 0 0 0 0 0
+    NCHAN 2
+    MAINSEND 0 0
+    HWOUT 0 0 1 0 0 0 0 -1:U -1
+    <ITEM
+      POSITION 0
+      LENGTH 4.6
+      LOOP 0
+      NAME stim.wav
+      SOFFS 0
+      PLAYRATE 1 1 0 -1 0 0.0025
+      <SOURCE WAVE
+        FILE "stim.wav"
+      >
+    >
+  >
+  <TRACK
+    NAME in3
+    VOLPAN 1 0 -1 -1 1
+    MUTESOLO 0 0 0
+    REC 1 2 0 0 0 0 0 0
+    NCHAN 2
+    MAINSEND 0 0
+  >
+  <TRACK
+    NAME in5
+    VOLPAN 1 0 -1 -1 1
+    MUTESOLO 0 0 0
+    REC 1 4 0 0 0 0 0 0
+    NCHAN 2
+    MAINSEND 0 0
+  >
+>

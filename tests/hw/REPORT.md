@@ -3010,3 +3010,338 @@ rare byte-loss mechanism (traced to between the device ACKing a USB OUT
 transfer and the bytes echoing back on IN) remains unexplained and
 un-fixed, not reproduced since the 5-URB change but not confirmed gone
 either.
+
+## Round-trip latency, raw ALSA (2026-10-24)
+
+First run of `tests/hw/px_latency.py` (`alsa` subcommand, commit
+`5ac51b1`), run by hand. Setup: driver 0.9.1, S/PDIF coax cable
+unplugged (`Digital Input Lock` = off, live read before the run), `Clock
+Source` = Internal, `In 3/4 Capture Source` = `Loopback 1/2`, `Direct 1/2`
+off, `PCM 1/2` on, PipeWire stopped (sockets included). Each run opens
+playback + capture on `hw:PhaseX64`, links them (`snd_pcm_link`), starts
+both in one trigger and plays 16 single-sample impulses (-6 dBFS) on Out
+1/2; the offset is where an impulse lands in the capture minus where it
+was in the playback stream, i.e. the delay the driver's pointer does not
+account for. Channels: ch 5 = bit-exact digital tap of Out 1/2 (USB and
+firmware pipeline only), ch 3 = Out 1/2's analog output via `Loopback
+1/2` (adds DAC + ADC). Every valid run passed the idle rate readback
+(`Digital Input Rate` = requested rate) and had a per-impulse spread of 0
+(all 16 impulses at the same offset - no drift or dropout inside a run).
+
+**Measured** (samples; `tap` = ch 5, `analog` = ch 3):
+
+| rate | buffer | run | tap | analog | analog - tap | driver-reported extra delay |
+|---|---|---|---|---|---|---|
+| 48000 | 64x2 | 1 | - | - | - | capture xrun, run invalid |
+| 48000 | 64x2 | 2 | 218 | 270.95 | 52.95 | 0 / 0 |
+| 48000 | 64x2 | 3 | 216 | 268.95 | 52.95 | 0 / 0 |
+| 48000 | 64x3 | 1 | 226 | 278.95 | 52.95 | 0 / 0 |
+| 48000 | 64x3 | 2 | 220 | 272.94 | 52.94 | 0 / 0 |
+| 48000 | 64x3 | 3 | 226 | 278.94 | 52.94 | 0 / 0 |
+| 48000 | 128x2 | 1 | 234 | 286.94 | 52.94 | 0 / 0 |
+| 48000 | 128x2 | 2 | 214 | 266.93 | 52.93 | 0 / 0 |
+| 48000 | 128x2 | 3 | 228 | 280.93 | 52.93 | 0 / 0 |
+| 48000 | 256x2 | 1 | 224 | 276.92 | 52.92 | 0 / 0 |
+| 48000 | 256x2 | 2 | 222 | 274.92 | 52.92 | 0 / 0 |
+| 48000 | 256x2 | 3 | 210 | 262.91 | 52.91 | 0 / 0 |
+| 48000 | 512x2 | 1 | 214 | 266.91 | 52.91 | 0 / 0 |
+| 48000 | 512x2 | 2 | 208 | 260.90 | 52.90 | 0 / 0 |
+| 48000 | 512x2 | 3 | 214 | 266.90 | 52.90 | 0 / 0 |
+| 44100 | 64x2 | 1, 2 | - | - | - | playback xrun, runs invalid |
+| 44100 | 64x2 | 3 | 188 | 240.87 | 52.87 | 0 / 0 |
+| 44100 | 256x2 | 1 | 224 | 276.86 | 52.86 | 0 / 0 |
+| 44100 | 256x2 | 2 | 210 | 262.85 | 52.85 | 0 / 0 |
+| 44100 | 256x2 | 3 | 181 | 233.84 | 52.84 | 0 / 0 |
+
+Summary: 48 kHz (14 valid runs) tap 208-234, mean 219.6 (4.33-4.88 ms,
+mean 4.57 ms), analog - tap 52.90-52.95; 44.1 kHz (4 valid runs) tap
+181-224, mean 200.8 (4.10-5.08 ms, mean 4.55 ms), analog - tap
+52.84-52.87. The driver reports 0 extra delay in both directions
+(`runtime->delay` is never set, see `analysis/NOTES.md`).
+
+**Split into two parts.**
+
+- *Sample-based, ~52.9 samples (measured):* analog - tap is the same in
+  samples at 44.1 and 48 kHz (52.86 vs 52.93), and constant to 0.05
+  samples across every buffer size and run. It is therefore set by the
+  converters' clocked filters, not by USB timing. *Inference:* the WM8776
+  datasheet gives typical digital-filter group delays of 22 (ADC) + 19
+  (DAC) = 41 samples (Table 17); the other ~12 samples are plausibly the
+  sigma-delta modulators, analog filtering and the I2S framing around the
+  codecs, but this measurement cannot attribute them.
+- *Time-based, ~4.55 ms (measured):* the tap offset is the same in time at
+  both rates (mean 4.57 vs 4.55 ms), not in samples (219.6 vs 200.8).
+  *Inference:* this is the USB pipeline - the driver keeps `PLAY_URBS` = 4
+  playback URBs of 1 ms in flight and advances its pointer when frames are
+  copied into an URB, not when they are played (3-4 ms), plus 32-frame
+  capture bulk URBs and whatever FIFO the device firmware keeps. Which
+  share of the 4.55 ms belongs to playback and which to capture is not
+  measurable with a round trip.
+- Neither part depends on the ALSA buffer size (64x2 ... 512x2): it is
+  latency below the driver's ALSA pointer, invisible to every client.
+
+**Run-to-run skew (measured):** the tap offset varies per stream start -
+standard deviation 7.4 samples at 48 kHz (range 26 samples = 0.54 ms),
+19.8 at 44.1 kHz (range 43 samples = 0.97 ms, 4 runs only) - while being
+exactly constant within a run. *Inference:* the phase between the
+playback URB schedule and the capture bulk stream is set anew at each
+transport start. Under PipeWire with `session.suspend-timeout-seconds = 0`
+the device starts once per session, so the skew is fixed for a session
+but differs between sessions; a fixed latency compensation can therefore
+only be right to about +-13 samples at 48 kHz. (*Corrected later:* with
+more starts the spread is wider, 48-54 samples at 64x2 and 52 over the
+REAPER takes - see "F2 values re-measured" and "px_latency.py: the 64x2
+xruns, fixed".)
+
+**xrun verdict: the measurement script, not the driver (inference, with
+these measured facts behind it).** The kernel log for the whole run
+window has no line from the driver or the USB core - only the 8 plug-in
+lines from before the runs (no rate warning, no watchdog, no URB error).
+That alone does not clear the driver, since an ALSA xrun is detected by
+the ALSA core and the driver logs nothing for it. The xruns occurred only
+at the smallest buffer, 64x2 = 128 frames (2.67 ms at 48 kHz, 2.90 ms at
+44.1 kHz); all 15 runs at 64x3 or larger were clean. The two 44.1 kHz
+underruns happened in the first 0.3 s (the run's 0.3 s status line never
+printed); the 48 kHz capture overrun happened later. The `5ac51b1` loop
+refilled playback with exactly as many frames as it had just read from
+capture, and capture data arrives later than playback is consumed (32-frame
+bulk URBs plus the device's own lag), so the playback fill sank to the
+buffer size minus that lag minus the read granularity minus the 1 ms
+consumption step - almost nothing at 128 frames. The capture overrun is
+consistent with a host-side pause of more than 2.67 ms (Python garbage
+collection, or the one status print plus `/proc` read the loop did at the
+0.3 s mark). The loop was rewritten afterwards (`11913ca`): playback is
+topped up to the full buffer on every pass, independent of capture; the
+loop polls at 1 ms, reads straight into a preallocated buffer, and prints
+and garbage-collects nothing until the run is over. That loop passes the
+selftest against a simulated device with the driver's 1 ms / 32-frame
+shape at 64x2, but a simulator has no real-time behaviour - **the 64x2
+runs still need one hardware re-run to confirm.**
+
+Side observation (measured, not investigated): the analog channel's peak
+level fell steadily over the session, -7.4 dBFS in the first valid run
+to -8.2 dBFS in the last 48 kHz run and -8.5 to -8.7 dBFS at 44.1 kHz,
+while the digital tap stayed at -6.0 dBFS. The analog - tap delay did not
+change with it (52.95 -> 52.90). Small analog drift (e.g. warm-up) or the
+44.1 kHz filters; irrelevant to the latency result.
+
+**Through PipeWire / REAPER (inference, written before the REAPER
+measurement - confirmed by "REAPER through pipewire-jack" below).** By the PipeWire
+1.6.10 source, an ALSA node's port advertises 1 quantum
+(`spa/plugins/alsa/alsa-pcm-sink.c:910-913`, `alsa-pcm-source.c:856-859`)
+plus its headroom as `min_rate`/`max_rate` (`alsa-pcm.c:2111-2156`; for a
+BATCH device under timer scheduling the headroom gains one ALSA period,
+:2131-2132, and capture gets at least 32 frames, :2136-2137), and
+pipewire-jack reports exactly `quantum x nframes + rate + ns` to JACK
+clients (`pipewire-jack/src/pipewire-jack.c:6733-6771`). Both terms are
+real buffering PipeWire itself keeps in the ALSA ring. Nothing in that
+path knows about the ~4.55 ms + 52.9 samples measured here, and the ALSA
+plugin never calls `snd_pcm_delay()`. So by the source, REAPER on
+pipewire-jack should be ~270 samples late at 48 kHz, at every quantum -
+not the ~54 samples measured by hand earlier, which matches analog - tap
+alone. That points to the hand measurement having had the digital
+pipeline as its reference, or to REAPER compensating something beyond
+the JACK port latencies. `tests/hw/reaper-latency/` records In 3 and In 5
+in the same take to settle it: in5's error isolates the USB part, in3 -
+in5 the converter part.
+
+## REAPER through pipewire-jack (2026-10-25)
+
+Run by hand with `tests/hw/reaper-latency/` (project template + README),
+REAPER 7.81 on JACK (pipewire-jack), PipeWire 1.6.10, driver 0.9.1, 48
+kHz, PipeWire left running with `clock.force-quantum` set to 64, 256 and
+1024 in turn. Mixer as in the raw-ALSA run (`In 3/4 Capture Source` =
+`Loopback 1/2`, `Direct 1/2` off, `PCM 1/2` on, `Digital Input Lock` off),
+REAPER's *Use audio driver reported latency* on, manual offsets 0. One
+take of the 16-impulse stimulus per quantum: track `stim` (stimulus,
+hardware out 1/2), `in3` (REAPER input 3 = `capture_AUX2`, the analog
+loopback) and `in5` (input 5 = `capture_AUX4`, the digital tap). The ALSA
+period of the PHASE X64 followed the quantum (64 / 256 / 1024; the buffer was 192
+frames at quantum 64; read from `/proc/asound`). `px_latency.py rpp`
+reads the remaining error from the saved project; every take had all 16
+impulses at one constant offset.
+
+**Measured** (samples; what is left over after REAPER's compensation -
+positive = the recording sits late):
+
+| quantum | REAPER's reported latency (status line) | in5 (digital, USB only) | in3 (analog) | in3 - in5 |
+|---|---|---|---|---|
+| 64 | 64 in / 64 out (~1.3 ms) | 255.00 | 307.76 | 52.76 |
+| 256 | 256 / 256 (~5.3 ms) | 217.00 | 269.75 | 52.75 |
+| 1024 | 1024 / 1024 (~21 ms) | 236.00 | 288.73 | 52.73 |
+
+- The reported latency is exactly one quantum each way, as the PipeWire
+  source says (`alsa-pcm.c:2111-2156`, `pipewire-jack.c:6733-6771`; see
+  above). REAPER also showed `64spls ~1.3/2.0ms` while its outputs were
+  still auto-connected to another card (the default sink): the output
+  figure follows the connected device.
+- **The error does not grow with the quantum.** in5 217-255, a spread of
+  38 samples (0.8 ms) with no trend; the raw-ALSA runs at 48 kHz had
+  208-234 (14 runs, mean 219.6). in3 - in5 is 52.7-52.8 at every
+  quantum, equal to the raw-ALSA converter part (52.9). So REAPER on
+  pipewire-jack compensates what PipeWire reports (one quantum each way)
+  and nothing of the ~4.5 ms USB part nor the ~53 samples of the codecs.
+- The 54 samples of the earlier hand measurement therefore equal the
+  converter part alone (inference: that measurement had a reference that
+  already contained the USB delay; not checked).
+- Not explained: the quantum-64 take is 255, 21 above the highest raw-ALSA
+  run (234). One take only; the per-start skew (sd 7.4 samples, 14 runs)
+  makes 255 unlikely but not impossible. Not tested whether it repeats.
+
+**REAPER puts its compensation inside the recorded file** (measured, q64):
+the same take with *Use audio driver reported latency* off lies at 354
+(first eight impulses) / 360 (last eight) for in5 and 407 / 413 for in3,
+against 255 / 307.76 with it on. The saved project has `POSITION 0` and
+`SOFFS 0` in both cases and the file length equals the item length, so the
+shift is not stored as an item offset. The difference, ~99 samples, is
+close to the 128 samples REAPER reports (64 in + 64 out); the remaining
+~29 is within the per-start skew (inference; one take each). The
+uncompensated take has a +6-sample step between its 8th and 9th impulse
+(~2.3-2.5 s), identical on in5 and in3 - so in the capture/playback chain
+and not in the converters. Seen once, not investigated; it did not occur
+in the compensated q64, q256 and q1024 takes.
+
+**Procedure findings** (for whoever repeats this):
+- REAPER's `out1`..`out4` auto-connect to the *default sink*; here that
+  was another USB interface, so the first thing to check is
+  `pw-link -l`. A recording with silent in3/in5 means the stimulus played
+  elsewhere. The inputs were right without changes.
+- Changing a *Preferences > Audio* setting restarts REAPER's JACK client
+  and with it the connections: one take was lost that way (silent, kept
+  out of the results). Opening another project does not.
+- REAPER reopens the last project; the path in its status line tells
+  which one is open.
+- The kernel log had no line from the driver or the USB core for any of
+  the runs.
+
+**Consequence for the PipeWire node properties (inference):** what
+`latency.internal.*` would have to add is the remaining error: ~4.6-4.9
+ms (the raw-ALSA mean 219.6 samples = 4.57 ms; the three REAPER takes mean
+236 samples = 4.92 ms) in total over playback and capture, plus ~52.8
+samples for the converters. The split between playback and capture cannot
+be measured with a round trip. A fixed value is only right to about +-13
+samples because of the per-start skew (*corrected later:* the spread
+between starts turned out to be up to ~52 samples, see "F2 values
+re-measured").
+
+Still open: how the driver reports delay to ALSA (it reports none, so raw
+ALSA clients have the whole ~270 samples unreported), a repeat of the
+quantum-64 take, 44.1 kHz through REAPER, and the +6-sample step.
+
+## F2 values re-measured (2026-10-25)
+
+The `latency.internal.*` values proposed at the end of "REAPER through
+pipewire-jack" were put in `linux/wireplumber/51-phasex64-pro-audio.conf`
+(one block per direction: sink `rate` 19 / `ns` 4000000, source `rate` 34 /
+`ns` 600000; all other properties unchanged) and measured again with the
+same kit, REAPER 7.81 on pipewire-jack, 48 kHz, compensation on, same
+mixer setup, the PHASE X64 being the default sink this time (so no
+`pw-link` was needed).
+
+**Installing it** (WirePlumber 0.5.18). A conf in the user's XDG config
+directory with the same file name does *not* replace the packaged one in
+`/usr/share/wireplumber/wireplumber.conf.d/`: fragments are loaded from
+all locations, system first, and arrays such as `monitor.alsa.rules` are
+concatenated (`docs/rst/daemon/locations.rst` "Configuration fragments",
+`conf_file.rst` "Fragments"; `lib/wp/conf.c` opens `<name>.d` per
+location). Both therefore apply: the old shared rule, then the two new
+ones; the later rules win and set the same values plus
+`latency.internal.*`. An `override.monitor.alsa.rules` would have replaced
+the whole array including other fragments' rules (the user's own, and
+`alsa-vm.conf`), so it was not used.
+
+**Verified before measuring** (`pw-dump`, measured): both nodes carry the
+properties and `ProcessLatency` {rate 19, ns 4000000} / {rate 34, ns
+600000}. The port latencies, quantum 1 + rate 0 + ns 0 before, are now
+1 quantum + 19 samples + 4.0 ms (`playback_AUX0`, input direction) and
+1 quantum + 34 samples + 0.6 ms (`capture_AUX2`, output direction);
+pipewire-jack turns that into quantum + 211 and quantum + 63 samples,
+274 more in total. REAPER's status line agreed: quantum 64 `~2.6/5.7ms`
+(127 in / 275 out), quantum 256 `~6.6/9.7ms` (319 / 467).
+`api.alsa.period-size` 512 on the nodes is PipeWire's own choice for a
+batch device at the default quantum 1024 (`alsa-pcm.c:2453-2457`), not
+from this conf.
+
+**Expectation** (corrected during the run - the first reading of it was
+wrong): the analog path (`in3`) should end at about 0 (hidden ~273 vs
+274 added). The digital tap (`in5`) does not pass the converters, so the
+53 converter samples are over-compensated there: about -54 (~220 - 274),
+not 0.
+
+**Measured** (samples left over after REAPER's compensation; negative =
+the recording is early; every take had all 16 impulses at one constant
+offset; kernel log empty each time):
+
+| take | quantum | in5 (digital tap) | in3 (analog) | in3 - in5 |
+|---|---|---|---|---|
+| q64a | 64 | -84.00 | -31.51 | 52.5 |
+| q64b (after a PipeWire restart) | 64 | -32.00 | +20.31 | 52.3 |
+| q256 | 256 | -77.00 | -24.71 | 52.3 |
+| q1024 | 1024 | -79.00 | -26.73 | 52.3 |
+
+Without the values (previous section): in5 255 / 217 / 236, in3 308 / 270 /
+289 at 64 / 256 / 1024.
+
+- **The remaining error does not scale with the quantum** (measured):
+  quantum 64, 256 and 1024 fall in the same band, no trend.
+- **Analog path (what a recording sees), measured:** mean -15.7 samples
+  (-0.33 ms), median -26, range -31.5 ... +20.3 (n = 4), against about
+  +290 before. The converter part (in3 - in5) is 52.3-52.5 in all four.
+  in5 averages -68 (expected -54).
+- **Spread (measured):** the four takes span 52 samples (1.1 ms); the
+  pre-F2 REAPER takes spanned 38 and the raw-ALSA runs 26. Three takes
+  cluster tightly (in5 -77 ... -84); q64b lies 45-52 samples above them.
+  *Inference, one outlier only:* 48 samples are exactly 1 ms at 48 kHz,
+  so the start phase of the USB stream may hop in 1 ms steps. Not tested;
+  it would take many device restarts.
+- **q64 as an outlier:** in the first series q64 was 21 above the
+  raw-ALSA maximum, in this one q64a is the earliest and q64b the latest
+  take. So q64 is not systematically off; its two takes just land at
+  the two ends of a spread that the other quanta show less of with their
+  single takes.
+- **Should the values change?** *Recommendation:* no. The mean analog error
+  (-16) is smaller than the spread between starts (52), with four takes;
+  a correction would chase noise. If one is wanted anyway: capture `ns`
+  600000 -> 300000 (14 samples). A fixed value cannot remove the
+  start-to-start spread; only a driver that reports its real delay per
+  start could.
+
+Still open: the driver itself still reports no delay to ALSA (raw ALSA
+clients see the whole ~270 samples as unreported); the start-phase
+spread and whether it is quantized; 44.1 kHz through REAPER; more takes
+per quantum.
+
+## px_latency.py: the 64x2 xruns, fixed (2026-10-25)
+
+The loop rewrite of `11913ca` (playback topped up independently, 1 ms
+poll, no allocation or GC in the loop) was **not enough on hardware**:
+at 64x2 (128 frames = 2.67 ms) 2 of 5 runs at 48 kHz still failed with a
+capture overrun (3 of 6 before the rewrite), 3 valid runs gave tap 218-248
+and analog - tap 52.1-52.2. The `scheduling:` line was not there yet; the
+process ran at normal priority.
+
+Fix: the `alsa` subcommand now asks for `SCHED_FIFO` 50 and locks its
+memory (`enable_realtime()`, best effort, reported on a `scheduling:` line;
+`--no-rt` skips it; the user has `rtprio` 98 through the `realtime` group).
+The loop sleeps in `snd_pcm_wait()`, so the priority cannot starve the
+machine. **Measured result: 0 xruns in 10 of 10 runs at 64x2** (5 at 48
+kHz, 5 at 44.1 kHz, PipeWire stopped, `In 3/4` = `Loopback 1/2`, cable
+out, every run passed the idle rate readback; no line from the driver or
+the USB core in the kernel log).
+
+| rate | runs | tap (ch5), samples | analog - tap | driver-reported extra delay |
+|---|---|---|---|---|
+| 48000 | 5 | 194, 206, 212, 234, 248 (mean 218.8, sd 21.8, range 54) | 52.10-52.12 | 0 / 0 |
+| 44100 | 5 | 190, 198, 201, 202, 238 (mean 205.8, sd 18.6, range 48) | 52.07-52.09 | 0 / 0 |
+
+Consistent with the earlier sections: the converter part is 52.1 samples
+at both rates, the USB part is the same in time (4.56 ms at 48 kHz, 4.67
+ms at 44.1 kHz). New: at 64x2 the tap offset varies more between starts
+(range 54 and 48 samples, 1.0-1.1 ms) than at the larger buffers of the
+first run (26 samples, 14 runs); the REAPER takes with the latency values
+in place spanned 52 samples as well. *Inference, not tested:* a start-phase
+spread of about one USB millisecond (48 samples at 48 kHz) that the
+smaller period makes visible; many device restarts would be needed to
+show it. The cause of the earlier overruns is therefore the measuring
+process's scheduling, not the driver (inference from them disappearing
+with realtime priority; the driver was not changed).

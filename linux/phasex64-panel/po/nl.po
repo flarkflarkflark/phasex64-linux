@@ -4,7 +4,7 @@
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: phasex64-panel 0.9.1\n"
+"Project-Id-Version: phasex64-panel 0.9.2\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2026-10-21 12:36+0200\n"
 "PO-Revision-Date: 2026-10-16 08:28+0200\n"
