@@ -566,12 +566,25 @@ liggen binnen dat bereik; groottes onder 64 worden niet aangeboden. De
 titelbalk van REAPER toont een nieuwe grootte pas nadat het afspelen is
 gestopt en opnieuw gestart.
 
-**Opname-offset in REAPER**: bij 64 kwam een analoge loopback-opname
-(Out 3/4 naar Aux In 3/4) ongeveer 54 samples (≈1,1 ms) later binnen
-dan REAPER's eigen latentiecompensatie verrekent. Dat is een eerste,
-benaderende meting. Neem voor sample-nauwkeurige overdubs één keer een
-korte loopback op, meet het verschil en vul dat in als REAPER's
-handmatige opname-offset (Preferences → Audio → Recording).
+**Latentiecompensatie in DAW's**: de driver meldt de eigen vertraging
+van de interface niet aan ALSA, en PipeWire's ALSA-plugin vraagt er
+nooit om, dus PipeWire- en JACK-programma's compenseren standaard alleen
+de buffers die ze kennen. Gemeten komt een analoge loopback-opname dan
+ongeveer 270 samples te laat binnen (≈5,6 ms bij 48 kHz: ongeveer 4,6 ms
+USB-pijplijn plus ongeveer 53 samples in de converters; bij elke
+buffergrootte hetzelfde). Het optionele pakket `phasex64-wireplumber`
+telt precies dat op bij de latentie van de PHASE X64-nodes
+(`latency.internal.*`), zodat REAPER op `pipewire-jack` het zelf
+compenseert en **geen handmatige offset nodig heeft**. Gemeten bij 64,
+256 en 1024 samples met de waarden actief: de analoge loopback-opname
+kwam tussen -0,7 en +0,4 ms van de goede plek (vier opnames). Het
+USB-deel verschilt ongeveer 1 ms tussen starts van het apparaat; geen
+vaste waarde haalt dat weg. Meet voor sample-nauwkeurige overdubs nog
+eens (`tests/hw/reaper-latency/`) en vul de rest in als REAPER's
+handmatige offset (Preferences → Audio → Recording). Controleer of de
+waarden actief zijn: `pw-dump | grep latency.internal`. Programma's die
+ALSA rechtstreeks gebruiken hebben er geen baat bij; de vertraging
+wordt aan hen niet gemeld. Methode en cijfers: `tests/hw/REPORT.md`.
 
 ## Indeling opnamekanalen
 

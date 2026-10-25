@@ -7,6 +7,48 @@ The driver, the panel and the packages share one version number.
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-25
+
+Latency compensation for DAWs through PipeWire. **No driver or panel
+changes** apart from the version number.
+
+### Added
+
+- `phasex64-wireplumber` now reports the interface's own delay to
+  PipeWire through `latency.internal.*` on the PHASE X64 nodes
+  (playback 19 samples + 4.0 ms, capture 34 samples + 0.6 ms; 274 samples
+  at 48 kHz in total). The driver sets no ALSA delay and PipeWire's ALSA
+  plugin never asks for one, so a DAW compensated only one buffer each
+  way. Measured with REAPER on `pipewire-jack`: the error of an analog
+  loopback recording went from about 290 samples to within ±1 ms of the
+  right place at quantum 64, 256 and 1024 (four takes, -0.7 to +0.4 ms);
+  the USB part varies by about 1 ms between starts of the device, which
+  no fixed value removes.
+- `tests/hw/px_latency.py`: sample-accurate round-trip latency
+  measurement through raw ALSA (linked playback and capture, impulse
+  stimulus, digital tap and analog loopback), plus offline analysis of
+  recordings, a null test and a REAPER-project reader. Refuses to run
+  with Digital Input Lock on or the card in use, never writes mixer
+  controls, closes its PCMs on every exit path, uses realtime
+  scheduling when permitted (0 xruns in 10 runs at the smallest buffer,
+  64x2), and has an offline self-test.
+- `tests/hw/reaper-latency/`: a REAPER project and step-by-step guide
+  for checking the compensation at several buffer sizes.
+- Measurements in `tests/hw/REPORT.md`: ~4.6 ms USB pipeline and ~53
+  samples in the converters, independent of the buffer size.
+
+### Changed
+
+- Documentation: the "~54 samples" REAPER offset and the advice to enter a
+  manual offset are replaced by the measured numbers above.
+
+### Fixed
+
+- Measurement note: the earlier statement that 88.2 and 96 kHz "break the
+  capture engine" came from a run with the S/PDIF loopback cable
+  connected and was already marked invalid in `tests/hw/REPORT.md`; the
+  new script accepts all four rates.
+
 ## [0.9.1] - 2026-10-23
 
 Packaging, installation and documentation release. **No driver or panel
@@ -63,6 +105,7 @@ First public release (beta).
   samples.
 - Arch Linux packaging (`linux/PKGBUILD`).
 
-[Unreleased]: https://github.com/flarkflarkflark/phasex64-linux/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/flarkflarkflark/phasex64-linux/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/flarkflarkflark/phasex64-linux/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/flarkflarkflark/phasex64-linux/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/flarkflarkflark/phasex64-linux/releases/tag/v0.9.0

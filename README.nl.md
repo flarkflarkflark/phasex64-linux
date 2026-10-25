@@ -36,7 +36,7 @@ werkt.
 
 ## Status
 
-**v0.9.1, publieke bèta.** Getest met één exemplaar, op twee machines
+**v0.9.2, publieke bèta.** Getest met één exemplaar, op twee machines
 (zie [Geteste omgeving](#geteste-omgeving)).
 
 Wat werkt:
@@ -112,7 +112,7 @@ controleer ze met `SHA256SUMS` en installeer ze:
 
 ```sh
 sudo pacman -S --needed linux-headers   # de headers van jouw kernel, zie hieronder
-v=0.9.1
+v=0.9.2
 base=https://github.com/flarkflarkflark/phasex64-linux/releases/download/v$v
 curl -L --remote-name-all "$base/SHA256SUMS" \
   "$base/snd-usb-phasex64-dkms-$v-1-any.pkg.tar.zst" \
@@ -137,7 +137,7 @@ met `phasex64-panel`:
 
 ```sh
 sudo modprobe snd-usb-phasex64
-cat /sys/module/snd_usb_phasex64/version   # 0.9.1
+cat /sys/module/snd_usb_phasex64/version   # 0.9.2
 ```
 
 Optioneel, voor JACK/REAPER: het WirePlumber-profiel. Lees eerst
@@ -165,7 +165,7 @@ Bijwerken: hetzelfde met de nieuwere versie; verwijderen:
 ### 3. Elke andere distributie: release-tarball + DKMS
 
 ```sh
-v=0.9.1
+v=0.9.2
 base=https://github.com/flarkflarkflark/phasex64-linux/releases/download/v$v
 curl -L --remote-name-all "$base/SHA256SUMS" "$base/phasex64-linux-$v.tar.gz"
 sha256sum -c --ignore-missing SHA256SUMS   # moet "OK" geven
@@ -328,9 +328,14 @@ PipeWire-nodes gesuspend), dus hij laat niet zien of er audio loopt.
 - **Buffergroottes:** 64, 128, 256 en 1024 samples draaien stabiel met
   tegelijk afspelen en opnemen; een live wijziging kan één korte klik
   geven.
-- **Latentie:** bij 64 samples kwam een analoge loopback-opname ongeveer
-  54 samples (≈1,1 ms) later binnen dan REAPER's eigen compensatie
-  verrekent. Dat is een eerste, benaderende meting. Details:
+- **Latentie:** met het optionele pakket `phasex64-wireplumber` meldt
+  PipeWire de eigen vertraging van de interface (ongeveer 4,6 ms
+  USB-pijplijn plus 53 samples in de converters), zodat een DAW zoals
+  REAPER de volledige rondgang zelf compenseert en geen handmatige
+  offset nodig heeft. Gemeten bij 64, 256 en 1024 samples: een analoge
+  loopback-opname komt binnen ±1 ms van de goede plek (met ongeveer 1 ms
+  verschil tussen starts van het apparaat). Zonder het pakket, of bij
+  directe ALSA-toegang, wordt die vertraging niet gemeld. Details:
   [Buffergrootte en latentie](linux/README.nl.md#buffergrootte-en-latentie).
 - **MIDI heeft een audiostream nodig:** de firmware van het apparaat
   geeft MIDI alleen door terwijl er een audiostream loopt (alleen een

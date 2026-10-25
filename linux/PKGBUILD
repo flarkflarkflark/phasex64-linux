@@ -8,7 +8,7 @@
 # the AUR; keep pkgver/pkgrel and the package() functions in step.
 pkgbase=phasex64
 pkgname=(snd-usb-phasex64-dkms phasex64-panel phasex64-wireplumber)
-pkgver=0.9.1
+pkgver=0.9.2
 # One project version for everything in this repo - the driver's
 # MODULE_VERSION, dkms.conf's PACKAGE_VERSION, the panel's VERSION and
 # this pkgver - starting with 0.9.0, the first public release (the

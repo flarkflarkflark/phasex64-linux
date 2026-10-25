@@ -32,7 +32,7 @@ works with.
 
 ## Status
 
-**v0.9.1, public beta.** Tested on one unit, on two machines (see
+**v0.9.2, public beta.** Tested on one unit, on two machines (see
 [Tested environment](#tested-environment)).
 
 What works:
@@ -104,7 +104,7 @@ check them against `SHA256SUMS`, and install them:
 
 ```sh
 sudo pacman -S --needed linux-headers   # the headers for your kernel, see below
-v=0.9.1
+v=0.9.2
 base=https://github.com/flarkflarkflark/phasex64-linux/releases/download/v$v
 curl -L --remote-name-all "$base/SHA256SUMS" \
   "$base/snd-usb-phasex64-dkms-$v-1-any.pkg.tar.zst" \
@@ -128,7 +128,7 @@ the panel from the application menu ("PHASE X64 USB") or with
 
 ```sh
 sudo modprobe snd-usb-phasex64
-cat /sys/module/snd_usb_phasex64/version   # 0.9.1
+cat /sys/module/snd_usb_phasex64/version   # 0.9.2
 ```
 
 Optional, for JACK/REAPER use: the WirePlumber profile. Read
@@ -156,7 +156,7 @@ To update, do the same with the newer version; to remove:
 ### 3. Any other distribution: release tarball + DKMS
 
 ```sh
-v=0.9.1
+v=0.9.2
 base=https://github.com/flarkflarkflark/phasex64-linux/releases/download/v$v
 curl -L --remote-name-all "$base/SHA256SUMS" "$base/phasex64-linux-$v.tar.gz"
 sha256sum -c --ignore-missing SHA256SUMS   # must say "OK"
@@ -314,9 +314,14 @@ whether audio is streaming.
 - **Buffer sizes:** 64, 128, 256 and 1024 samples run stable with
   playback and recording at the same time; a live change can cause one
   short click.
-- **Latency:** at 64 samples, an analog loopback recording came back
-  about 54 samples (≈1.1 ms) later than REAPER's own compensation
-  accounts for. This is a first, approximate measurement. Details:
+- **Latency:** with the optional `phasex64-wireplumber` package, PipeWire
+  reports the interface's own delay (about 4.6 ms USB pipeline plus 53
+  samples in the converters), so a DAW such as REAPER compensates the
+  round trip itself and needs no manual offset. Measured at 64, 256 and
+  1024 samples: an analog loopback recording lands within ±1 ms of the
+  right place (it varies by about 1 ms between starts of the device).
+  Without the package, or with direct ALSA access, that delay is not
+  reported. Details:
   [Buffer size and latency](linux/README.md#buffer-size-and-latency).
 - **MIDI needs an audio stream:** the device firmware only passes MIDI
   while an audio stream is running (a capture stream alone is enough).

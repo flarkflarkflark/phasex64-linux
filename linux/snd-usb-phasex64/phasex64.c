@@ -4888,4 +4888,4 @@ module_usb_driver(px_driver);
 
 MODULE_DESCRIPTION("TerraTec PHASE X64 USB audio driver");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("0.9.1");
+MODULE_VERSION("0.9.2");

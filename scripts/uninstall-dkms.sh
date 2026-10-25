@@ -9,7 +9,7 @@
 #
 #   sudo scripts/uninstall-dkms.sh           # remove every version it installed
 #   scripts/uninstall-dkms.sh --dry-run      # show what would happen
-#   sudo scripts/uninstall-dkms.sh --version 0.9.1
+#   sudo scripts/uninstall-dkms.sh --version 0.9.2
 set -euo pipefail
 
 MODULE=snd-usb-phasex64
