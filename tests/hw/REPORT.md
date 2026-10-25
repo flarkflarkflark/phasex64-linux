@@ -3088,7 +3088,10 @@ playback URB schedule and the capture bulk stream is set anew at each
 transport start. Under PipeWire with `session.suspend-timeout-seconds = 0`
 the device starts once per session, so the skew is fixed for a session
 but differs between sessions; a fixed latency compensation can therefore
-only be right to about +-13 samples at 48 kHz.
+only be right to about +-13 samples at 48 kHz. (*Corrected later:* with
+more starts the spread is wider, 48-54 samples at 64x2 and 52 over the
+REAPER takes - see "F2 values re-measured" and "px_latency.py: the 64x2
+xruns, fixed".)
 
 **xrun verdict: the measurement script, not the driver (inference, with
 these measured facts behind it).** The kernel log for the whole run
@@ -3217,7 +3220,9 @@ ms (the raw-ALSA mean 219.6 samples = 4.57 ms; the three REAPER takes mean
 236 samples = 4.92 ms) in total over playback and capture, plus ~52.8
 samples for the converters. The split between playback and capture cannot
 be measured with a round trip. A fixed value is only right to about +-13
-samples because of the per-start skew.
+samples because of the per-start skew (*corrected later:* the spread
+between starts turned out to be up to ~52 samples, see "F2 values
+re-measured").
 
 Still open: how the driver reports delay to ALSA (it reports none, so raw
 ALSA clients have the whole ~270 samples unreported), a repeat of the
