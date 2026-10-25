@@ -3222,3 +3222,86 @@ samples because of the per-start skew.
 Still open: how the driver reports delay to ALSA (it reports none, so raw
 ALSA clients have the whole ~270 samples unreported), a repeat of the
 quantum-64 take, 44.1 kHz through REAPER, and the +6-sample step.
+
+## F2 values re-measured (2026-10-25)
+
+The `latency.internal.*` values proposed at the end of "REAPER through
+pipewire-jack" were put in `linux/wireplumber/51-phasex64-pro-audio.conf`
+(one block per direction: sink `rate` 19 / `ns` 4000000, source `rate` 34 /
+`ns` 600000; all other properties unchanged) and measured again with the
+same kit, REAPER 7.81 on pipewire-jack, 48 kHz, compensation on, same
+mixer setup, the PHASE X64 being the default sink this time (so no
+`pw-link` was needed).
+
+**Installing it** (WirePlumber 0.5.18). A conf in the user's XDG config
+directory with the same file name does *not* replace the packaged one in
+`/usr/share/wireplumber/wireplumber.conf.d/`: fragments are loaded from
+all locations, system first, and arrays such as `monitor.alsa.rules` are
+concatenated (`docs/rst/daemon/locations.rst` "Configuration fragments",
+`conf_file.rst` "Fragments"; `lib/wp/conf.c` opens `<name>.d` per
+location). Both therefore apply: the old shared rule, then the two new
+ones; the later rules win and set the same values plus
+`latency.internal.*`. An `override.monitor.alsa.rules` would have replaced
+the whole array including other fragments' rules (the user's own, and
+`alsa-vm.conf`), so it was not used.
+
+**Verified before measuring** (`pw-dump`, measured): both nodes carry the
+properties and `ProcessLatency` {rate 19, ns 4000000} / {rate 34, ns
+600000}. The port latencies, quantum 1 + rate 0 + ns 0 before, are now
+1 quantum + 19 samples + 4.0 ms (`playback_AUX0`, input direction) and
+1 quantum + 34 samples + 0.6 ms (`capture_AUX2`, output direction);
+pipewire-jack turns that into quantum + 211 and quantum + 63 samples,
+274 more in total. REAPER's status line agreed: quantum 64 `~2.6/5.7ms`
+(127 in / 275 out), quantum 256 `~6.6/9.7ms` (319 / 467).
+`api.alsa.period-size` 512 on the nodes is PipeWire's own choice for a
+batch device at the default quantum 1024 (`alsa-pcm.c:2453-2457`), not
+from this conf.
+
+**Expectation** (corrected during the run - the first reading of it was
+wrong): the analog path (`in3`) should end at about 0 (hidden ~273 vs
+274 added). The digital tap (`in5`) does not pass the converters, so the
+53 converter samples are over-compensated there: about -54 (~220 - 274),
+not 0.
+
+**Measured** (samples left over after REAPER's compensation; negative =
+the recording is early; every take had all 16 impulses at one constant
+offset; kernel log empty each time):
+
+| take | quantum | in5 (digital tap) | in3 (analog) | in3 - in5 |
+|---|---|---|---|---|
+| q64a | 64 | -84.00 | -31.51 | 52.5 |
+| q64b (after a PipeWire restart) | 64 | -32.00 | +20.31 | 52.3 |
+| q256 | 256 | -77.00 | -24.71 | 52.3 |
+| q1024 | 1024 | -79.00 | -26.73 | 52.3 |
+
+Without the values (previous section): in5 255 / 217 / 236, in3 308 / 270 /
+289 at 64 / 256 / 1024.
+
+- **The remaining error does not scale with the quantum** (measured):
+  quantum 64, 256 and 1024 fall in the same band, no trend.
+- **Analog path (what a recording sees), measured:** mean -15.7 samples
+  (-0.33 ms), median -26, range -31.5 ... +20.3 (n = 4), against about
+  +290 before. The converter part (in3 - in5) is 52.3-52.5 in all four.
+  in5 averages -68 (expected -54).
+- **Spread (measured):** the four takes span 52 samples (1.1 ms); the
+  pre-F2 REAPER takes spanned 38 and the raw-ALSA runs 26. Three takes
+  cluster tightly (in5 -77 ... -84); q64b lies 45-52 samples above them.
+  *Inference, one outlier only:* 48 samples are exactly 1 ms at 48 kHz,
+  so the start phase of the USB stream may hop in 1 ms steps. Not tested;
+  it would take many device restarts.
+- **q64 as an outlier:** in the first series q64 was 21 above the
+  raw-ALSA maximum, in this one q64a is the earliest and q64b the latest
+  take. So q64 is not systematically off; its two takes just land at
+  the two ends of a spread that the other quanta show less of with their
+  single takes.
+- **Should the values change?** *Recommendation:* no. The mean analog error
+  (-16) is smaller than the spread between starts (52), with four takes;
+  a correction would chase noise. If one is wanted anyway: capture `ns`
+  600000 -> 300000 (14 samples). A fixed value cannot remove the
+  start-to-start spread; only a driver that reports its real delay per
+  start could.
+
+Still open: the driver itself still reports no delay to ALSA (raw ALSA
+clients see the whole ~270 samples as unreported); the start-phase
+spread and whether it is quantized; 44.1 kHz through REAPER; more takes
+per quantum.

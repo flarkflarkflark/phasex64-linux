@@ -135,6 +135,19 @@ Reading it: in5's error is the USB part REAPER did not compensate, in3 -
 in5 the converter part (~52.8). Result of the first run (2026-10-25) and
 what to expect: `../REPORT.md`, "REAPER through pipewire-jack".
 
+### With the `latency.internal.*` values installed
+
+If the node properties from `linux/wireplumber/51-phasex64-pro-audio.conf`
+are active (check with `pw-dump`: both PHASE X64 nodes carry
+`latency.internal.rate` / `.ns`; REAPER's status line then shows a larger
+latency than the bare quantum, e.g. `~2.6/5.7ms` at quantum 64), the
+expectation changes: **in3 about 0, in5 about -54** - the digital tap
+does not pass the converters, whose ~53 samples are now compensated.
+Results of the first run: `../REPORT.md`, "F2 values re-measured". A
+user-level copy of the conf is *added* to the system one (WirePlumber
+merges fragments from all locations, a same-named file does not replace
+the other), which is harmless for these values.
+
 ### Optional: the same take without compensation
 
 To see how much REAPER takes off: switch *Preferences > Audio > Recording >
