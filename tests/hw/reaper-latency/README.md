@@ -10,9 +10,12 @@ This kit records the same impulse stimulus on two tracks in one take:
   converters);
 - **in5** - capture 5, the bit-exact digital tap of Out 1/2 (USB only).
 
-Then `px_latency.py rpp` reads, from the saved project, where REAPER put
-each recorded item, and prints the remaining error in samples. 0 = REAPER
-compensated exactly; positive = the recording sits late.
+Then `px_latency.py rpp` reads, from the saved project, the recorded
+take of each track and prints what is left over after REAPER's own latency
+compensation, in samples. 0 = REAPER compensated exactly; positive = the
+recording sits late. (REAPER 7.81 applies its compensation inside the
+recorded file and leaves the item at position 0 / start offset 0, so this
+is the raw offset of the take against the stimulus.)
 
 Done once per PipeWire quantum: 64, 256 and 1024. All by hand - nothing
 in this directory opens the device by itself.
@@ -67,25 +70,39 @@ pw-dump > ~/px-latency/reaper/q$Q/pw-dump.json       # what PipeWire reports, fo
 ```
 
 1. Start REAPER fresh (quit it between quanta - it takes the JACK
-   latencies when it opens the device) and open `q$Q/latency.rpp`.
-2. **First time only, check the routing** - the one thing this kit cannot
-   pin down for you is how REAPER's input numbers map under
-   pipewire-jack. REAPER's "Input 3" is REAPER's own third JACK input
-   port; which PHASE X64 channel feeds it depends on the connections. Check
-   them in a terminal:
+   latencies when it opens the device) and open `q$Q/latency.rpp`. REAPER
+   reopens the *last* project: check that the path in the status line
+   (top right) says `q$Q/recorded`, and open the right project if not.
+   The status line also shows the latencies JACK reports, `NNNspls
+   ~x/yms`: at quantum 64, 256, 1024 they were 64, 256, 1024 samples each
+   way.
+2. **Check the routing.** REAPER's `out1`..`out4` auto-connect to the
+   *default sink* - on a machine with several audio devices that is not
+   the PHASE X64, and the recording is then silent. Look:
 
    ```sh
-   pw-link -l | grep -A3 -i reaper
+   pw-link -l | grep -A1 -E '^REAPER:(out|in[35])$'
    ```
 
-   Expected: `REAPER:in3` <- the PHASE X64 pro input's third channel (port
-   name like `capture_AUX2`), `REAPER:in5` <- its fifth (`capture_AUX4`),
-   `REAPER:out1`/`out2` -> the pro output's first two (`playback_AUX0`,
-   `playback_AUX1`). Anything else (another card first, or no links):
-   connect them that way in qpwgraph, or pick the inputs in the tracks'
-   record-input menus. Also check in REAPER: track `stim`'s routing window
-   shows a hardware output to 1/2 (if not, add it there) and no master
-   send; `in3`/`in5` show record input "Input 3"/"Input 5" (mono).
+   Expected: `REAPER:in3` <- the PHASE X64 pro input's third channel
+   (`capture_AUX2`), `REAPER:in5` <- its fifth (`capture_AUX4`) - that
+   part was right here without any change. If `REAPER:out1`/`out2` go
+   elsewhere, move them (state-changing, run it yourself; `P` is the
+   PHASE X64's `alsa_output...pro-output-0` node name from `pw-link -o`):
+
+   ```sh
+   A=alsa_output.<other device>.pro-output-0
+   P=alsa_output.<PHASE X64>.pro-output-0
+   for i in 1 2 3 4; do pw-link -d REAPER:out$i $A:playback_AUX$((i-1)); done
+   pw-link REAPER:out1 $P:playback_AUX0
+   pw-link REAPER:out2 $P:playback_AUX1
+   ```
+
+   **Redo this after anything that restarts REAPER's audio** (opening
+   another project does not, but changing a Preferences > Audio setting
+   does, and so does restarting REAPER). Also check in REAPER: track
+   `stim`'s routing window shows one hardware output 1/2 and no master
+   send; `in3`/`in5` take Input 3 / Input 5 (mono).
 3. Press **Home** (cursor to 0), **Ctrl+R** (record), wait until the play
    cursor is past the end of the stim item (4.6 s), **Space** (stop), keep
    the take, **Ctrl+S** (save), quit REAPER.
@@ -107,27 +124,33 @@ About 15 minutes in total.
 
 ## What to send back
 
-- `q64/rpp.txt`, `q256/rpp.txt`, `q1024/rpp.txt` - per track the raw
-  offset in the recorded file, REAPER's compensation and the **remaining
-  error** (that last number is the result).
+- `q64/rpp.txt`, `q256/rpp.txt`, `q1024/rpp.txt` - per track the offset
+  of the recorded take and the **remaining error** (the last number is
+  the result).
 - `q64/pw-dump.json`, `q256/pw-dump.json`, `q1024/pw-dump.json`.
 - What `pw-link -l | grep -A3 -i reaper` showed, if anything had to be
   reconnected.
 
 Reading it: in5's error is the USB part REAPER did not compensate, in3 -
-in5 the converter part (expected ~52.9). By the PipeWire 1.6.10 source
-neither part is reported anywhere, so the expectation is in5 ~= 220 +- 13
-and in3 ~= 273 at every quantum (`../REPORT.md`, same section, last
-paragraph). in5 ~= 0 and in3 ~= 53 would mean something compensates the
-USB part after all.
+in5 the converter part (~52.8). Result of the first run (2026-10-25) and
+what to expect: `../REPORT.md`, "REAPER through pipewire-jack".
+
+### Optional: the same take without compensation
+
+To see how much REAPER takes off: switch *Preferences > Audio > Recording >
+"Use audio driver reported latency"* off, **then redo the `pw-link` step
+above** (the preference change reconnects the outputs), record again,
+switch it back on. The new `recorded/*.wav` files can be read with
+`px_latency.py analyze FILE --channels 1`. At quantum 64 that gave 354 vs
+255 samples (one take each; REAPER takes about the reported 128 off).
 
 ## Why the saved project and not a stem render
 
-REAPER writes each recorded item's position and start offset (`POSITION`,
-`SOFFS`) into the saved project, next to the path of the raw recorded file.
-The raw file's offset against the stimulus, minus the shift REAPER applied,
-is REAPER's error, with no render settings involved. A stem render gets the
-same number but depends on several dialog settings (source "selected
+The saved project names the raw recorded file of each take, and REAPER's
+compensation is already inside that file (item `POSITION` and `SOFFS`
+stay 0), so the file's offset against the stimulus is REAPER's remaining
+error, with no render settings involved. A stem render gets the same
+number but depends on several dialog settings (source "selected
 tracks (stems)", bounds from 0, mono, no normalisation or dither, no tail),
 any one of which can silently shift or alter the output. It is still a
 useful cross-check if you want one:

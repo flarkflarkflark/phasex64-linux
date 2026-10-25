@@ -3122,7 +3122,8 @@ while the digital tap stayed at -6.0 dBFS. The analog - tap delay did not
 change with it (52.95 -> 52.90). Small analog drift (e.g. warm-up) or the
 44.1 kHz filters; irrelevant to the latency result.
 
-**Through PipeWire / REAPER (open, inference only).** By the PipeWire
+**Through PipeWire / REAPER (inference, written before the REAPER
+measurement - confirmed by "REAPER through pipewire-jack" below).** By the PipeWire
 1.6.10 source, an ALSA node's port advertises 1 quantum
 (`spa/plugins/alsa/alsa-pcm-sink.c:910-913`, `alsa-pcm-source.c:856-859`)
 plus its headroom as `min_rate`/`max_rate` (`alsa-pcm.c:2111-2156`; for a
@@ -3140,3 +3141,84 @@ pipeline as its reference, or to REAPER compensating something beyond
 the JACK port latencies. `tests/hw/reaper-latency/` records In 3 and In 5
 in the same take to settle it: in5's error isolates the USB part, in3 -
 in5 the converter part.
+
+## REAPER through pipewire-jack (2026-10-25)
+
+Run by hand with `tests/hw/reaper-latency/` (project template + README),
+REAPER 7.81 on JACK (pipewire-jack), PipeWire 1.6.10, driver 0.9.1, 48
+kHz, PipeWire left running with `clock.force-quantum` set to 64, 256 and
+1024 in turn. Mixer as in the raw-ALSA run (`In 3/4 Capture Source` =
+`Loopback 1/2`, `Direct 1/2` off, `PCM 1/2` on, `Digital Input Lock` off),
+REAPER's *Use audio driver reported latency* on, manual offsets 0. One
+take of the 16-impulse stimulus per quantum: track `stim` (stimulus,
+hardware out 1/2), `in3` (REAPER input 3 = `capture_AUX2`, the analog
+loopback) and `in5` (input 5 = `capture_AUX4`, the digital tap). The ALSA
+period of the PHASE X64 followed the quantum (64 / 256 / 1024; the buffer was 192
+frames at quantum 64; read from `/proc/asound`). `px_latency.py rpp`
+reads the remaining error from the saved project; every take had all 16
+impulses at one constant offset.
+
+**Measured** (samples; what is left over after REAPER's compensation -
+positive = the recording sits late):
+
+| quantum | REAPER's reported latency (status line) | in5 (digital, USB only) | in3 (analog) | in3 - in5 |
+|---|---|---|---|---|
+| 64 | 64 in / 64 out (~1.3 ms) | 255.00 | 307.76 | 52.76 |
+| 256 | 256 / 256 (~5.3 ms) | 217.00 | 269.75 | 52.75 |
+| 1024 | 1024 / 1024 (~21 ms) | 236.00 | 288.73 | 52.73 |
+
+- The reported latency is exactly one quantum each way, as the PipeWire
+  source says (`alsa-pcm.c:2111-2156`, `pipewire-jack.c:6733-6771`; see
+  above). REAPER also showed `64spls ~1.3/2.0ms` while its outputs were
+  still auto-connected to another card (the default sink): the output
+  figure follows the connected device.
+- **The error does not grow with the quantum.** in5 217-255, a spread of
+  38 samples (0.8 ms) with no trend; the raw-ALSA runs at 48 kHz had
+  208-234 (14 runs, mean 219.6). in3 - in5 is 52.7-52.8 at every
+  quantum, equal to the raw-ALSA converter part (52.9). So REAPER on
+  pipewire-jack compensates what PipeWire reports (one quantum each way)
+  and nothing of the ~4.5 ms USB part nor the ~53 samples of the codecs.
+- The 54 samples of the earlier hand measurement therefore equal the
+  converter part alone (inference: that measurement had a reference that
+  already contained the USB delay; not checked).
+- Not explained: the quantum-64 take is 255, 21 above the highest raw-ALSA
+  run (234). One take only; the per-start skew (sd 7.4 samples, 14 runs)
+  makes 255 unlikely but not impossible. Not tested whether it repeats.
+
+**REAPER puts its compensation inside the recorded file** (measured, q64):
+the same take with *Use audio driver reported latency* off lies at 354
+(first eight impulses) / 360 (last eight) for in5 and 407 / 413 for in3,
+against 255 / 307.76 with it on. The saved project has `POSITION 0` and
+`SOFFS 0` in both cases and the file length equals the item length, so the
+shift is not stored as an item offset. The difference, ~99 samples, is
+close to the 128 samples REAPER reports (64 in + 64 out); the remaining
+~29 is within the per-start skew (inference; one take each). The
+uncompensated take has a +6-sample step between its 8th and 9th impulse
+(~2.3-2.5 s), identical on in5 and in3 - so in the capture/playback chain
+and not in the converters. Seen once, not investigated; it did not occur
+in the compensated q64, q256 and q1024 takes.
+
+**Procedure findings** (for whoever repeats this):
+- REAPER's `out1`..`out4` auto-connect to the *default sink*; here that
+  was another USB interface, so the first thing to check is
+  `pw-link -l`. A recording with silent in3/in5 means the stimulus played
+  elsewhere. The inputs were right without changes.
+- Changing a *Preferences > Audio* setting restarts REAPER's JACK client
+  and with it the connections: one take was lost that way (silent, kept
+  out of the results). Opening another project does not.
+- REAPER reopens the last project; the path in its status line tells
+  which one is open.
+- The kernel log had no line from the driver or the USB core for any of
+  the runs.
+
+**Consequence for the PipeWire node properties (inference):** what
+`latency.internal.*` would have to add is the remaining error: ~4.6-4.9
+ms (the raw-ALSA mean 219.6 samples = 4.57 ms; the three REAPER takes mean
+236 samples = 4.92 ms) in total over playback and capture, plus ~52.8
+samples for the converters. The split between playback and capture cannot
+be measured with a round trip. A fixed value is only right to about +-13
+samples because of the per-start skew.
+
+Still open: how the driver reports delay to ALSA (it reports none, so raw
+ALSA clients have the whole ~270 samples unreported), a repeat of the
+quantum-64 take, 44.1 kHz through REAPER, and the +6-sample step.

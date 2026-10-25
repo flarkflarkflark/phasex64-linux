@@ -24,9 +24,12 @@ tests/hw/README.md, "Latency measurement (px_latency.py)".
             Offset 0 = perfectly compensated; >0 = recording is late.
   null      null test of one analog channel between two saved captures,
             aligned on the digital tap (0 dB = unchanged check).
-  rpp       REAPER's latency compensation error, from a saved project:
-            raw offset of each recorded take minus the shift REAPER applied
-            (SOFFS - POSITION). See tests/hw/reaper-latency/README.md.
+  rpp       what REAPER's latency compensation leaves over, from a saved
+            project: the recorded take's offset against the stimulus, minus
+            any item shift (SOFFS - POSITION). REAPER 7.81 applies its
+            compensation inside the recorded file and leaves POSITION and
+            SOFFS at 0 (measured, tests/hw/REPORT.md), so the raw offset is
+            then the remaining error. See tests/hw/reaper-latency/README.md.
   selftest  offline check of the analysis, `analyze`, `null`, `rpp` and the
             `alsa` I/O loop (against a simulated device) on synthetic data;
             exits 0 only if every check passes.
@@ -701,9 +704,12 @@ def parse_rpp(path):
 
 
 def cmd_rpp(args):
-    """REAPER's own latency compensation error, straight from the saved
-    project: the recorded WAV's raw offset against the stimulus, minus the
-    shift REAPER applied to the item (SOFFS - POSITION). Needs no render.
+    """What REAPER's latency compensation leaves over, from the saved
+    project: the recorded WAV's offset against the stimulus, minus any
+    shift the item carries (SOFFS - POSITION). REAPER 7.81 puts its
+    compensation inside the recorded file and keeps both at 0, so for a
+    real project this is just the raw offset - the formula only matters if
+    a REAPER version shifts the item instead. Needs no render.
     Returns {track: error_samples} (first item of each track)."""
     tracks = {t["name"]: t for t in parse_rpp(args.project)}
     results = {}
@@ -730,7 +736,7 @@ def cmd_rpp(args):
                 warn += "  <-- several takes, first one used"
             if abs(item["position"]) > 0.05:
                 warn += "  <-- recording did not start at 0 - restart from the beginning"
-            print(f"  REAPER compensation {comp:8.2f} samples; "
+            print(f"  item shift (SOFFS-POSITION) {comp:8.2f} samples; "
                   f"remaining error {err:8.2f} samples ({err / rate * 1e3:.3f} ms){warn}")
             results.setdefault(name, err)
     return results
