@@ -14,7 +14,7 @@
 # want - `makepkg -si` would install all three.
 pkgbase=phasex64
 pkgname=(snd-usb-phasex64-dkms phasex64-panel phasex64-wireplumber)
-pkgver=0.9.1
+pkgver=0.9.2
 # Same pkgrel as linux/PKGBUILD for the same content, so a package built
 # from the checkout and the AUR one compare as equal versions.
 pkgrel=1
@@ -24,7 +24,7 @@ url="https://github.com/flarkflarkflark/phasex64-linux"
 license=(GPL-2.0-only)
 makedepends=(gettext librsvg)
 source=("$url/releases/download/v$pkgver/phasex64-linux-$pkgver.tar.gz")
-sha256sums=('945d8003bbd399cc854d41c1079debcbe3938ff39b6f5611f2f6bc867fbf11bb')
+sha256sums=('a9153369de88090d9442ff7c7698b13549fdfe66c3623558008e0956f20f1186')
 
 _src() {
   printf '%s/phasex64-linux-%s/linux' "$srcdir" "$pkgver"
