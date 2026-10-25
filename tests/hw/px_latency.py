@@ -49,6 +49,8 @@ Clock Source, PCM 1/2 and Direct 1/2 and In 3/4 Capture Source, and stops
 with the exact amixer command for you to run if one is wrong. PCMs are
 opened non-blocking, so a busy device fails at once instead of waiting.
 Both PCMs are closed on every exit path, Ctrl-C/SIGTERM/SIGHUP included.
+The loop asks for SCHED_FIFO 50 and locked memory (best effort, reported on
+the "scheduling:" line; --no-rt skips it).
 After each run (device idle again) it reads `Digital Input Rate` - a live
 GET_CUR while not streaming - and marks the run invalid if the device does
 not report the requested rate.
@@ -88,8 +90,31 @@ AMPLITUDE = 0.5     # -6 dBFS single-sample impulse
 MAXLAG_S = 0.1      # search window, +-100 ms
 POLL_MS = 1         # snd_pcm_wait() timeout per pass of the I/O loop
 STALL_S = 2.0       # no capture data and no playback space for this long = abort
+RT_PRIO = 50        # SCHED_FIFO priority of the alsa loop (threaded IRQs run at 50)
 RATE_READBACK_DELAY_S = 0.5
 CLEANUP_SIGNALS = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}
+
+
+def enable_realtime():
+    """Best effort: SCHED_FIFO for this process and its memory locked, so
+    that a 64-frame capture buffer (2.7 ms) is not overrun because the
+    normal scheduler preempted the loop. Never raises; returns what was
+    applied, for the log. (The loop sleeps in snd_pcm_wait(), it does not
+    spin, so a FIFO priority cannot starve the machine.)"""
+    done, failed = [], []
+    try:
+        os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(RT_PRIO))
+        done.append(f"SCHED_FIFO {RT_PRIO}")
+    except (OSError, AttributeError) as e:
+        failed.append(f"SCHED_FIFO not applied ({e})")
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.mlockall(1 | 2) != 0:        # MCL_CURRENT | MCL_FUTURE
+            raise OSError(ctypes.get_errno(), os.strerror(ctypes.get_errno()))
+        done.append("memory locked")
+    except (OSError, AttributeError) as e:
+        failed.append(f"mlockall not applied ({e})")
+    return ", ".join(done + failed) or "nothing applied"
 
 
 class Interrupted(Exception):
@@ -567,6 +592,7 @@ def cmd_alsa(args):
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, _on_signal)
     preflight(args)
+    print("scheduling: " + ("normal (--no-rt)" if args.no_rt else enable_realtime()))
     alsa = Alsa()
     x, pos = stimulus(args.rate)
     ref = x[:, 0]
@@ -940,6 +966,20 @@ def cmd_selftest(args):
                 abs(ana[0] - _SimLib.TAP - _SimLib.ANALOG) < 0.01 and extra == (0, 0)):
             failures.append(f"sim {sim_rate} {period}x{periods}")
 
+    # enable_realtime() must never raise, privileged or not
+    real = os.sched_setscheduler
+    try:
+        def deny(*a, **k):
+            raise PermissionError(1, "Operation not permitted")
+        os.sched_setscheduler = deny
+        msg = enable_realtime()
+        ok = "SCHED_FIFO not applied" in msg
+        print(f"\nenable_realtime() without privilege: {msg!r}  {'ok' if ok else 'FAIL'}")
+        if not ok:
+            failures.append("enable_realtime fallback")
+    finally:
+        os.sched_setscheduler = real
+
     # ...and the simulator does detect an underrun (else the above is vacuous)
     sim = _SimLib(48000, 128, 64)
     sim.snd_pcm_start("P")
@@ -992,8 +1032,8 @@ def main():
     a.add_argument("--card", default="PhaseX64", help="ALSA card id (default %(default)s)")
     a.add_argument("--rate", type=int, default=48000, choices=RATES,
                    help="88.2/96 kHz: tested once without PipeWire (tests/hw/REPORT.md, "
-                        "\"Acceptance tests (2026-10-14 ...)\"); small periods there may "
-                        "xrun in this Python loop - such a run is reported FAILED")
+                        "\"Acceptance tests (2026-10-14 ...)\"); not tried with this "
+                        "script. An xrun makes that run FAILED (see the \"scheduling:\" line)")
     a.add_argument("--buffers", default="64x2,64x3,128x2,256x2,512x2",
                    help="comma list of PERIODxPERIODS (default %(default)s)")
     a.add_argument("--reps", type=int, default=3, help="fresh open/start per repetition")
@@ -1003,6 +1043,8 @@ def main():
                    help="Out 1/2 is patched into the analog channel by cable; skip the "
                         "In 3/4 = Loopback 1/2 check")
     a.add_argument("--save", default=None, help="prefix: also save each 6ch capture as WAV")
+    a.add_argument("--no-rt", action="store_true",
+                   help="do not request SCHED_FIFO / mlockall (default: try, and say what applied)")
     z = sub.add_parser("analyze", help="offsets in an existing recording")
     z.add_argument("wav")
     z.add_argument("--channels", default=None, help="comma list, 1-based (default: all)")

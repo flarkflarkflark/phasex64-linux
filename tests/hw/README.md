@@ -51,7 +51,12 @@ No other Python modules.
   S/PDIF clock (`REPORT.md`, "Windows USB trace (2026-10-14)"); the script
   refuses to run while `Digital Input Lock` is on.
 - 48 kHz for the main run, a 44.1 kHz run afterwards. (88.2 and 96 kHz are
-  accepted too, but at small periods this Python loop may not keep up.)
+  accepted too but have not been tried with this script.)
+- Realtime scheduling: the script asks for `SCHED_FIFO` 50 and locked
+  memory and prints what it got on the `scheduling:` line. The user needs
+  `rtprio` (e.g. via the `realtime` group on Arch); without it the runs
+  still work, but the smallest buffer (64x2 = 2.7 ms) may xrun. `--no-rt`
+  skips it.
 - Mixer state - set it yourself, the script only checks:
 
   ```sh
@@ -106,9 +111,10 @@ polarity, correlation and per-impulse spread; then the driver-reported
 extra delay, `analog - tap` and the device rate check. A summary table
 closes each invocation. What to look for:
 
-- **tap** constant across buffer sizes and runs. If it changes from run to
-  run, the start skew between the streams varies - that matters for
-  latency compensation, so note it.
+- **tap** the same *within* a run and independent of the buffer size.
+  Between runs it varies (measured: a range of 26 samples at larger
+  buffers, 54 at 64x2), the start-to-start skew; that limits how exactly
+  a fixed latency compensation can be right, so note it.
 - **analog - tap** constant, expected around the datasheet's 41 samples
   plus a little.
 - **spread** 0-1 everywhere. More means drift, an xrun or a dropout

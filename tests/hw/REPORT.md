@@ -3305,3 +3305,38 @@ Still open: the driver itself still reports no delay to ALSA (raw ALSA
 clients see the whole ~270 samples as unreported); the start-phase
 spread and whether it is quantized; 44.1 kHz through REAPER; more takes
 per quantum.
+
+## px_latency.py: the 64x2 xruns, fixed (2026-10-25)
+
+The loop rewrite of `11913ca` (playback topped up independently, 1 ms
+poll, no allocation or GC in the loop) was **not enough on hardware**:
+at 64x2 (128 frames = 2.67 ms) 2 of 5 runs at 48 kHz still failed with a
+capture overrun (3 of 6 before the rewrite), 3 valid runs gave tap 218-248
+and analog - tap 52.1-52.2. The `scheduling:` line was not there yet; the
+process ran at normal priority.
+
+Fix: the `alsa` subcommand now asks for `SCHED_FIFO` 50 and locks its
+memory (`enable_realtime()`, best effort, reported on a `scheduling:` line;
+`--no-rt` skips it; the user has `rtprio` 98 through the `realtime` group).
+The loop sleeps in `snd_pcm_wait()`, so the priority cannot starve the
+machine. **Measured result: 0 xruns in 10 of 10 runs at 64x2** (5 at 48
+kHz, 5 at 44.1 kHz, PipeWire stopped, `In 3/4` = `Loopback 1/2`, cable
+out, every run passed the idle rate readback; no line from the driver or
+the USB core in the kernel log).
+
+| rate | runs | tap (ch5), samples | analog - tap | driver-reported extra delay |
+|---|---|---|---|---|
+| 48000 | 5 | 194, 206, 212, 234, 248 (mean 218.8, sd 21.8, range 54) | 52.10-52.12 | 0 / 0 |
+| 44100 | 5 | 190, 198, 201, 202, 238 (mean 205.8, sd 18.6, range 48) | 52.07-52.09 | 0 / 0 |
+
+Consistent with the earlier sections: the converter part is 52.1 samples
+at both rates, the USB part is the same in time (4.56 ms at 48 kHz, 4.67
+ms at 44.1 kHz). New: at 64x2 the tap offset varies more between starts
+(range 54 and 48 samples, 1.0-1.1 ms) than at the larger buffers of the
+first run (26 samples, 14 runs); the REAPER takes with the latency values
+in place spanned 52 samples as well. *Inference, not tested:* a start-phase
+spread of about one USB millisecond (48 samples at 48 kHz) that the
+smaller period makes visible; many device restarts would be needed to
+show it. The cause of the earlier overruns is therefore the measuring
+process's scheduling, not the driver (inference from them disappearing
+with realtime priority; the driver was not changed).
